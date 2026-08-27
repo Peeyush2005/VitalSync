@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../data/models/health_metric_type.dart';
+import '../../../data/models/watch_connection_state.dart';
 import '../../providers/health_providers.dart';
+import '../../providers/watch_connection_provider.dart';
 import '../../widgets/demo_data_banner.dart';
 import '../../widgets/empty_state_card.dart';
 import '../../widgets/metric_summary_card.dart';
+import '../../widgets/watch_status_card.dart';
 
 /// Dashboard (home) tab.
 ///
@@ -23,14 +26,21 @@ class DashboardScreen extends ConsumerWidget {
     final steps = ref.watch(
       latestMeasurementProvider(HealthMetricType.steps),
     );
+    final watchConnection = ref.watch(watchConnectionProvider);
+    final connectionState =
+        watchConnection.value ?? WatchConnectionState.disconnected;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Dashboard')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          const DemoDataBanner(),
+          WatchStatusCard(state: connectionState),
           const SizedBox(height: 12),
+          if (!connectionState.isActive) ...[
+            const DemoDataBanner(),
+            const SizedBox(height: 12),
+          ],
           heartRate.when(
             data: (measurement) => measurement == null
                 ? const EmptyStateCard(

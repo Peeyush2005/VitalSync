@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vitalsync/data/models/watch_connection_state.dart';
 import 'package:vitalsync/data/repositories/fake_health_repository.dart';
 import 'package:vitalsync/data/repositories/health_repository.dart';
 import 'package:vitalsync/data/repositories/health_repository_provider.dart';
+import 'package:vitalsync/presentation/providers/watch_connection_provider.dart';
 import 'package:vitalsync/presentation/screens/dashboard/dashboard_screen.dart';
 
 void main() {
@@ -16,6 +18,9 @@ void main() {
           healthRepositoryProvider.overrideWithValue(
             FakeHealthRepository() as HealthRepository,
           ),
+          watchConnectionProvider.overrideWith(
+            (ref) => Stream.value(WatchConnectionState.disconnected),
+          ),
         ],
         child: const MaterialApp(home: DashboardScreen()),
       ),
@@ -24,8 +29,11 @@ void main() {
     // Providers resolve asynchronously.
     await tester.pumpAndSettle();
 
+    expect(find.text('Galaxy Watch'), findsOneWidget);
+    expect(find.text('Not connected'), findsOneWidget);
     expect(find.textContaining('simulated demo data'), findsOneWidget);
     expect(find.text('Heart rate'), findsOneWidget);
     expect(find.textContaining('bpm'), findsOneWidget);
   });
 }
+
