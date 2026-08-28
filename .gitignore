@@ -8,8 +8,6 @@
 .history
 migrate_working_dir/
 
-# Local progress notes (not for GitHub)
-PROGRESS.md
 
 # IntelliJ / Android Studio / VS Code related
 *.iml

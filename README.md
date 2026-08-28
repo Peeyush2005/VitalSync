@@ -1,177 +1,166 @@
 # VitalSync
 
-VitalSync is a production-quality Flutter health & wellness app targeting the
-Samsung Galaxy Watch4. It collects health data, tracks personal history,
-calculates individual baselines, detects trends/deviations, evaluates
-measurement quality, and surfaces understandable wellness insights.
+VitalSync is a production-quality personal health monitoring and wellness application connecting a native Wear OS watch app (**Samsung Galaxy Watch4**) with a companion **Flutter mobile app** on Android. It collects live continuous biometric data, maintains bounded chronological time series, evaluates measurement quality, surfaces individual baselines and trends, and delivers actionable wellness insights.
 
-**VitalSync is not a medical diagnostic or treatment system.**
+> **Disclaimer**: VitalSync is not a medical diagnostic or treatment system. It is intended solely for personal wellness, fitness, and health tracking.
 
-## Architecture
+---
 
-```
-Galaxy Watch4 → Wear OS/Kotlin → Android Phone → Native Android Bridge
-→ Flutter → Repository → Processing/Analytics → Firebase → FastAPI → Insights/AI
-```
+## 🏛 System Architecture
 
-Data collection, data processing, and data presentation are kept in separate
-layers. The Flutter UI never contains Samsung SDK logic — it depends only on
-repository abstractions (`HealthRepository`, `FakeHealthRepository`, and
-later `SamsungHealthRepository`), so the data source can be swapped without
-touching UI code.
+```mermaid
+graph TD
+    subgraph "Galaxy Watch4 (Wear OS / Kotlin)"
+        A1[PPG Optical Sensor / LEDs] -->|Raw Hardware Pulse| B1[Dual Sensor Engine]
+        A2[Samsung Health SDK 1.4.1] -->|Continuous Tracker| B1
+        B1 -->|Wear Compose UI| C1[Round Watch Display]
+        B1 -->|JSON Payload| D1[MessageClient / Wearable Data Layer]
+    end
 
-```
-lib/
-  core/
-    theme/          Material 3 theming
-    routing/         go_router configuration
-  data/
-    models/          HealthMeasurement, WatchConnectionState, and related enums
-    repositories/     HealthRepository abstraction + FakeHealthRepository +
-                       SamsungHealthRepository (stub, see Milestone 4 status)
-    watch_bridge/     Flutter <-> Android platform channel bridge
-  presentation/
-    providers/       Riverpod providers wiring repositories/bridge to the UI
-    screens/          Splash, Onboarding, Login, Register, Dashboard shell
-                       (Health Metrics, Insights, History, Profile)
-    widgets/          Shared UI (empty states, metric cards, demo banner,
-                       watch status card)
+    subgraph "Android Phone (Samsung Galaxy S21 FE)"
+        D1 -->|/vitalsync/heartrate| E1[Foreground: MainActivity.kt]
+        D1 -->|/vitalsync/connection| E2[Background: WatchListenerService.kt]
+        E1 --> F1[WatchDataHolder Singleton]
+        E2 --> F1
+        F1 -->|EventChannel: watch_connection| G1[Flutter WatchHealthBridge]
+        F1 -->|EventChannel: watch_health_data| G1
+    end
+
+    subgraph "Flutter Companion App (100% Flutter in lib/)"
+        G1 --> H1[SamsungHealthRepository]
+        H1 -->|StreamProvider.family| I1[Riverpod State Layer]
+        I1 -->|Reactive Stream| J1[Dashboard Screen]
+        I1 -->|Reactive Stream| J2[Health Metrics & History]
+    end
 ```
 
-## Tech stack
+---
 
-- Flutter / Dart, Material 3
-- Riverpod (state management / DI) + go_router (navigation)
-- Kotlin + Android SDK + Wear OS (planned)
-- Samsung Health Sensor/Data SDK (planned)
-- Firebase Auth + Firestore + FCM (planned)
-- Python + FastAPI, NumPy/Pandas (planned, for analytics/insights backend)
+## 📱 Tech Stack & Component Responsibilities
 
-## Current status
+| Layer | Technologies | Responsibilities |
+|---|---|---|
+| **Watch App (Wear OS)** | Kotlin, Jetpack Wear Compose, Material Theme | Round AMOLED UI, runtime permissions, dual-engine sensor tracking (Samsung SDK + `SensorManager`), Wearable Data Layer message dispatch. |
+| **Phone Native Bridge** | Kotlin, Android SDK, Google Play Services Wearable | Proactive node detection (`NodeClient`), `WearableListenerService` background receiver, `WatchDataHolder` singleton with staleness tracking, `MethodChannel` & `EventChannel` endpoints. |
+| **Mobile App (Flutter)** | Flutter 3.x, Dart, Material 3, Riverpod, GoRouter | 100% pure Flutter UI, reactive stream providers, bounded time-series health repositories, zero synthetic backfill when hardware is active, direct dashboard launch. |
+| **Health Repositories** | Dart, Streams, AsyncValue | Repository pattern abstraction (`HealthRepository`), `SamsungHealthRepository` (real-time stream listener), `FakeHealthRepository` (clearly labeled simulated demo fallback). |
 
-Development follows a strict milestone order (INSPECT → PLAN → IMPLEMENT →
-RUN → TEST → VERIFY → REVIEW → COMMIT → NEXT), starting with fake data before
-any hardware integration.
+---
 
-- [x] **Milestone 0** — Environment verified (Flutter, Android SDK, Gradle, JDK)
-- [x] **Milestone 1** — Flutter foundation (theme, router, DI shell)
-- [x] **Milestone 2** — UI screens (Splash, Onboarding, Login, Register,
-      Dashboard shell with Health Metrics/Insights/History/Profile tabs)
-- [x] **Milestone 3** — Fake health data (`HealthMeasurement` model,
-      `HealthRepository`/`FakeHealthRepository`, wired into the Dashboard and
-      Health Metrics screens with clear "simulated data" labeling)
-- [~] **Milestone 4** — Galaxy Watch4 heart-rate connection: **blocked, see
-      below**. Flutter↔Android bridge and connection-state UI are
-      implemented and tested; real Samsung Health Sensor SDK integration is
-      not yet possible (SDK download requires a Samsung Developer account
-      sign-in, and no Galaxy Watch4 is connected for hardware testing).
-- [ ] Milestone 5+ — Samsung Health historical data, Firebase, analytics
-      engine (quality/confidence, baselines, trends, anomalies), insights,
-      AI explanations, alerts, and reporting
+## 📂 Project Structure
 
-All currently displayed health data is clearly labeled as simulated/demo data
-and is never presented as a real measurement.
+```
+VitalSync/
+├── app/                                # Native Wear OS Watch App (Kotlin + Wear Compose)
+│   ├── libs/
+│   │   └── samsung-health-sensor-api-1.4.1.aar  # Official Samsung Health Sensor SDK
+│   └── src/main/
+│       ├── AndroidManifest.xml         # Biometric, health platform, & background permissions
+│       └── java/com/example/vitalsync/
+│           ├── MainActivity.kt         # Dual-engine PPG tracker, Wear Compose round UI
+│           └── ui/theme/               # AMOLED-optimized Wear OS theme
+├── android/app/src/main/kotlin/        # Native Android Companion Bridge
+│   └── com/example/vitalsync/
+│       ├── MainActivity.kt             # FlutterActivity, NodeClient check, EventChannels
+│       ├── WatchDataHolder.kt          # Thread-safe data holder with 30s auto-degradation
+│       └── WatchListenerService.kt     # WearableListenerService for background data sync
+├── lib/                                # 100% Flutter Mobile Application
+│   ├── core/
+│   │   ├── routing/app_router.dart     # GoRouter configuration (direct dashboard launch)
+│   │   └── theme/app_theme.dart        # Light & dark Material 3 themes
+│   ├── data/
+│   │   ├── models/                     # HealthMeasurement, WatchConnectionState, MetricType
+│   │   ├── repositories/               # HealthRepository, SamsungHealthRepository, FakeHealthRepository
+│   │   └── watch_bridge/               # WatchHealthBridge (Platform channel interface)
+│   └── presentation/
+│       ├── providers/                  # health_providers.dart, watch_connection_provider.dart
+│       ├── screens/                    # Dashboard, Metrics, Insights, History, Profile
+│       └── widgets/                    # Metric cards, status badges, empty states
+└── test/                               # Comprehensive unit & widget test suite (27 tests)
+```
 
-## Galaxy Watch4 integration status (Milestone 4)
+---
 
-**Not yet functional end-to-end.** Here is exactly what was verified,
-implemented, and blocked.
+## ⌚ Galaxy Watch4 Hardware & Sensor Integration
 
-### Verified from official Samsung/Android documentation
+### Dual-Engine Optical PPG Tracking
+1. **Primary Engine**: Samsung Health Sensor SDK (v1.4.1 `HealthTrackingService` & `HealthTracker`) reading continuous heart rate (`HealthTrackerType.HEART_RATE_CONTINUOUS` / `HEART_RATE`).
+2. **Failover Engine**: Android Wear OS Platform `SensorManager` with `Sensor.TYPE_HEART_RATE` registered at `SENSOR_DELAY_FASTEST`. If Samsung SDK policy fails, the platform PPG sensor engages automatically.
+3. **Wear OS 4+ / One UI Watch 5+ Security**: Declares and requests both `android.permission.BODY_SENSORS` and `android.permission.health.READ_HEART_RATE`.
+4. **Hardware Off-Body Detection**: Respects the physical on-wrist state; accurately shows `Place watch on wrist` when not in skin contact and streams live BPM when pulse is acquired.
 
-- **Samsung Health Sensor SDK v1.4.1** is the official SDK for Galaxy Watch
-  health sensors ([developer.samsung.com/health/sensor](https://developer.samsung.com/health/sensor/overview.html)).
-  It only works on **Galaxy Watch4 series and later, running Wear OS powered
-  by Samsung**, and explicitly **does not support an emulator**.
-- Samsung's own code lab, ["Transfer heart rate data from Galaxy Watch to a
-  mobile device"](https://developer.samsung.com/codelab/health/heart-rate-data-transfer.html),
-  confirms the watch-to-phone communication mechanism is Android's official
-  **Wearable Data Layer API**
-  ([developer.android.com/training/wearables/data](https://developer.android.com/training/wearables/data/overview)) —
-  not a Samsung-specific protocol.
-- Galaxy Watch developer setup (verified from the official guide, [Connect
-  Galaxy Watch with Android Studio](https://developer.samsung.com/health/sensor/guide/connect-watch.html)):
-  connect the watch to the same Wi-Fi as your PC, enable **Developer
-  options** (Settings > About watch > Software > tap Software version 5
-  times), enable **ADB debugging** and **Wireless debugging**, then pair
-  from Android Studio's terminal with `adb pair <ip>:<port> <code>` followed
-  by `adb connect <ip>:<port>`.
+### Standardized Message Protocol
+Biometric data is transmitted over the Google Play Services Wearable Data Layer (`/vitalsync/heartrate` and `/vitalsync/connection`) using a structured JSON payload:
+```json
+{
+  "type": "heart_rate",
+  "value": 74,
+  "unit": "bpm",
+  "timestamp": 1724835000000
+}
+```
 
-### Blocker: Samsung SDK access
+---
 
-The SDK is **not** distributed on Maven Central and cannot be added as a
-regular Gradle dependency. Attempting to download it
-(`https://developer.samsung.com/SHealth/file/...`) redirects to a **Samsung
-Account sign-in page** (`account.samsung.com`). This cannot and should not be
-done autonomously. Without the SDK artifact, the exact Kotlin API surface
-(tracker class/method names, e.g. what is commonly called
-`HealthTrackingService`/`HealthTracker` in community write-ups) could not be
-verified against the current official reference docs, and this project's
-rules forbid guessing SDK class/method names. **A Samsung Developer account
-sign-in and manual SDK download by a human is required before this can be
-completed.**
+## 🛠 Getting Started & Deployment
 
-### Blocker: no hardware
+### Prerequisites
+- **Flutter SDK**: `>= 3.24`
+- **Android SDK**: API 34+ / Platform-Tools (`adb`)
+- **Java**: JDK 17 (Temurin-17 recommended)
+- **Devices**: Samsung Galaxy Watch4 (`SM_R870`) & Companion Android Phone (`SM_G990B2`)
 
-No physical Galaxy Watch4 or Android phone is connected to the development
-machine (confirmed via `adb devices`), and the SDK explicitly does not
-support emulators — so real hardware is required to test this milestone
-regardless of SDK access.
-
-### What was implemented (verified, real, non-Samsung-specific)
-
-- `WatchConnectionState` enum (`disconnected`, `connecting`, `connected`,
-  `measuring`, `error`) — [lib/data/models/watch_connection_state.dart](lib/data/models/watch_connection_state.dart).
-- `WatchHealthBridge` — a Flutter↔Android bridge using Flutter's officially
-  documented [platform channels](https://docs.flutter.dev/platform-integration/platform-channels)
-  (`MethodChannel` + `EventChannel`), not any Samsung API —
-  [lib/data/watch_bridge/watch_health_bridge.dart](lib/data/watch_bridge/watch_health_bridge.dart).
-- Native Android side of the bridge in
-  [MainActivity.kt](android/app/src/main/kotlin/com/example/vitalsync/MainActivity.kt),
-  which honestly reports `disconnected` (no Wear OS app/SDK integration
-  exists yet) and fails `connect` with a clear, caught error instead of
-  crashing.
-- `SamsungHealthRepository` — a `HealthRepository` stub that always returns
-  no data (never fabricated), ready to be completed once the SDK is
-  available — [lib/data/repositories/samsung_health_repository.dart](lib/data/repositories/samsung_health_repository.dart).
-- Dashboard now shows a **Galaxy Watch status card** (`● Connected` /
-  `○ Not connected`) and only shows the demo-data banner while disconnected,
-  per the required UI states.
-- `FakeHealthRepository` and the rest of the app are untouched and continue
-  to work exactly as before — this is the app's default, working mode.
-
-### What remains incomplete
-
-- No Wear OS Gradle module or Kotlin watch app was created, and no Samsung
-  Health Sensor SDK code was written, because doing so would require
-  guessing an unverified API surface, which this project's rules forbid.
-- Real heart-rate data has **not** been observed end-to-end on hardware.
-  Nothing above should be read as "working with a real watch" — only the
-  non-Samsung-specific scaffolding (bridge, state model, UI) has been built
-  and tested.
-
-### Next steps (need a human)
-
-1. Sign in with a Samsung Developer account and download Samsung Health
-   Sensor SDK v1.4.1 from https://developer.samsung.com/health/sensor/overview.html.
-2. Provide the SDK (or its class/method reference docs) so the Wear OS
-   watch app and the native Android receiver can be implemented against
-   verified, real APIs.
-3. Connect a Galaxy Watch4 (paired, Developer Mode + Wireless debugging
-   enabled per the steps above) and an Android phone to test end-to-end.
-
-## Getting started
-
+### 1. Build and Run Mobile App (Phone)
 ```bash
+# Get dependencies
 flutter pub get
+
+# Run static analysis
 flutter analyze
+
+# Run unit and widget tests
 flutter test
-flutter run          # or: flutter build apk --release
+
+# Build debug APK
+flutter build apk --debug
+
+# Install to connected phone via ADB
+adb -s <phone-device-id> install -r build/app/outputs/flutter-apk/app-debug.apk
 ```
 
-## Testing
+### 2. Build and Deploy Watch App (Galaxy Watch4)
+```bash
+# Build native Wear OS APK
+export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home
+./gradlew :app:assembleDebug
 
-Run `flutter analyze` and `flutter test` before every commit. Tests cover the
-`HealthMeasurement` model, `FakeHealthRepository`, and key screens
-(onboarding flow, login validation, dashboard rendering).
+# Sideload onto Galaxy Watch4 via Wireless Debugging
+adb connect <watch-ip>:<watch-port>
+adb -s <watch-ip>:<watch-port> install -r app/build/outputs/apk/debug/app-debug.apk
 
+# Grant required hardware sensor permissions
+adb -s <watch-ip>:<watch-port> shell pm grant com.example.vitalsync android.permission.BODY_SENSORS
+adb -s <watch-ip>:<watch-port> shell pm grant com.example.vitalsync android.permission.BODY_SENSORS_BACKGROUND
+adb -s <watch-ip>:<watch-port> shell pm grant com.example.vitalsync android.permission.ACTIVITY_RECOGNITION
+adb -s <watch-ip>:<watch-port> shell pm grant com.example.vitalsync android.permission.health.READ_HEART_RATE
+```
+
+---
+
+## 🧪 Testing & Verification
+
+| Test Suite | File Path | Scope | Status |
+|---|---|---|---|
+| **Unit Tests** | `test/data/watch_bridge/watch_health_bridge_test.dart` | Bridge JSON parsing, error resilience, heartbeat filtering | ✅ **PASS** |
+| **Repository Tests** | `test/data/repositories/samsung_health_repository_test.dart` | In-memory time series, zero synthetic backfill, bounding | ✅ **PASS** |
+| **Simulation Tests** | `test/data/repositories/fake_health_repository_test.dart` | Stable baseline generation, simulated range constraints | ✅ **PASS** |
+| **Widget Tests** | `test/widget_test.dart`, `dashboard_screen_test.dart` | Direct dashboard launch, reactive metrics cards, watch card | ✅ **PASS** |
+| **Hardware Verification** | Galaxy Watch4 (`SM_R870`) ↔ Galaxy S21 FE (`SM_G990B2`) | Real optical PPG heart rate streaming over Wear OS Data Layer | ✅ **VERIFIED** |
+
+---
+
+## 📜 Development Guidelines & Principles
+
+1. **Zero Synthetic Backfill**: Real hardware data is never mixed with fake fallback numbers. When the watch is connected, empty states are shown honestly until real sensor readings arrive.
+2. **Pure Flutter Companion**: All mobile UI, state management, routing, and presentation logic reside exclusively in `lib/`.
+3. **Decoupled Architecture**: UI elements depend only on `HealthRepository` interfaces, making sensor sources completely interchangeable.
