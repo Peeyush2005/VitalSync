@@ -7,21 +7,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vitalsync/app.dart';
 
 void main() {
-  testWidgets('VitalSyncApp shows splash then navigates to onboarding', (
+  testWidgets('VitalSyncApp launches directly into dashboard', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(
       const ProviderScope(child: VitalSyncApp()),
     );
-
-    // Splash is shown immediately.
-    expect(find.text('VitalSync'), findsOneWidget);
-
-    // After the splash delay, it navigates to onboarding.
-    await tester.pump(const Duration(milliseconds: 700));
     await tester.pumpAndSettle();
 
-    expect(find.text('Understand your health'), findsOneWidget);
+    expect(find.text('Dashboard'), findsWidgets);
   });
 }
 

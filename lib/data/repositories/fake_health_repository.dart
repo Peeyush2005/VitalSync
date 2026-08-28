@@ -42,6 +42,19 @@ class FakeHealthRepository implements HealthRepository {
     return history.take(limit).toList(growable: false);
   }
 
+  @override
+  Stream<HealthMeasurement?> watchLatestMeasurement(HealthMetricType type) {
+    return Stream.fromFuture(getLatestMeasurement(type));
+  }
+
+  @override
+  Stream<List<HealthMeasurement>> watchMeasurementHistory(
+    HealthMetricType type, {
+    int limit = 50,
+  }) {
+    return Stream.fromFuture(getMeasurementHistory(type, limit: limit));
+  }
+
   List<HealthMeasurement> _generateHeartRateHistory() {
     final now = DateTime.now();
     const sampleCount = 48; // every 30 minutes over the past 24 hours

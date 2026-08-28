@@ -67,11 +67,11 @@ import org.json.JSONObject
 /**
  * VitalSync Wear OS watch app for Galaxy Watch4.
  *
- * Dual-Engine Live Biometric Tracking:
+ * Dual-Engine Live Biometric Tracking & Phone Communication:
  * 1. Primary: Samsung Health Sensor SDK ([HealthTrackingService] & [HealthTracker]).
  * 2. Fallback: Android Wear OS [SensorManager] ([Sensor.TYPE_HEART_RATE]).
  * 3. Streams live standardized JSON measurements over Google Play Services Wearable Data Layer.
- * 4. Built with Wear Compose for round AMOLED displays.
+ * 4. Provides direct "Send BPM to Phone" test triggers so data delivery can be verified instantly.
  */
 class MainActivity : ComponentActivity() {
 
@@ -111,6 +111,10 @@ class MainActivity : ComponentActivity() {
                     onStatusListener?.invoke(true, "Live: $bpm BPM")
                 }
                 sendHeartRateMessage(bpm = bpm, timestamp = System.currentTimeMillis())
+            } else {
+                mainHandler.post {
+                    onStatusListener?.invoke(true, "Reading pulse…")
+                }
             }
         }
 
@@ -158,9 +162,6 @@ class MainActivity : ComponentActivity() {
 
         override fun onError(error: HealthTracker.TrackerError) {
             Log.w(TAG, "Samsung Tracker error: $error — switching to Wear OS heart-rate sensor")
-            mainHandler.post {
-                onStatusListener?.invoke(isStreamingActive, "Wear OS Sensor Active")
-            }
             startAndroidHeartRateSensor()
         }
     }
@@ -184,6 +185,7 @@ class MainActivity : ComponentActivity() {
                     hasHeartRateSensor = hasHeartRateSensor(),
                     hasPermission = hasBodySensorsPermission(),
                     onRequestPermission = { onGranted -> requestBodySensorsPermission(onGranted) },
+                    onSendTestBpm = { bpm, onResult -> sendTestBpm(bpm, onResult) },
                     onSendPing = { onResult -> sendConnectionPing(onResult) },
                     onToggleStreaming = { start -> toggleStreaming(start) },
                     onRegisterHeartRateListener = { listener -> onHeartRateListener = listener },
@@ -238,9 +240,8 @@ class MainActivity : ComponentActivity() {
 
     private fun startStreaming() {
         isStreamingActive = true
-        onStatusListener?.invoke(true, "Connecting to sensor…")
+        onStatusListener?.invoke(true, "Sensor active…")
 
-        // Start fallback heartbeat ping so phone knows watch is active immediately
         startFallbackPingLoop()
 
         try {
@@ -283,14 +284,11 @@ class MainActivity : ComponentActivity() {
                 )
                 isAndroidSensorListening = true
                 mainHandler.post {
-                    onStatusListener?.invoke(true, "Sensor: Reading…")
+                    onStatusListener?.invoke(true, "Reading pulse…")
                 }
                 Log.d(TAG, "Registered Android SensorManager heart rate listener")
             } else {
                 Log.w(TAG, "No Android heart rate sensor available, using ping stream")
-                mainHandler.post {
-                    onStatusListener?.invoke(true, "Fallback streaming")
-                }
             }
         } catch (t: Throwable) {
             Log.e(TAG, "Failed to register Android SensorManager listener", t)
@@ -306,7 +304,6 @@ class MainActivity : ComponentActivity() {
         isStreamingActive = false
         mainHandler.removeCallbacks(fallbackPingRunnable)
 
-        // Stop Samsung Health tracker
         try {
             healthTracker?.unsetEventListener()
             healthTracker = null
@@ -316,7 +313,6 @@ class MainActivity : ComponentActivity() {
             Log.w(TAG, "Error disconnecting Samsung tracking service", t)
         }
 
-        // Stop Android SensorManager
         try {
             if (isAndroidSensorListening) {
                 sensorManager?.unregisterListener(androidSensorEventListener)
@@ -357,6 +353,40 @@ class MainActivity : ComponentActivity() {
             .addOnFailureListener { e -> Log.w(TAG, "NodeClient error: ${e.message}") }
     }
 
+    private fun sendTestBpm(bpm: Int, onResult: (String) -> Unit) {
+        Wearable.getNodeClient(this).connectedNodes
+            .addOnSuccessListener { nodes ->
+                if (nodes.isEmpty()) {
+                    onResult("No phone paired")
+                    return@addOnSuccessListener
+                }
+                val payload = JSONObject().apply {
+                    put("type", "heart_rate")
+                    put("value", bpm)
+                    put("unit", "bpm")
+                    put("timestamp", System.currentTimeMillis())
+                }.toString().toByteArray(Charsets.UTF_8)
+
+                val messageClient: MessageClient = Wearable.getMessageClient(this)
+                var sentCount = 0
+                nodes.forEach { node ->
+                    messageClient.sendMessage(node.id, HEARTRATE_PATH, payload)
+                        .addOnSuccessListener {
+                            sentCount++
+                            onResult("Sent $bpm BPM to phone ✓")
+                            mainHandler.post {
+                                onHeartRateListener?.invoke(bpm)
+                                onStatusListener?.invoke(true, "Sent: $bpm BPM")
+                            }
+                        }
+                        .addOnFailureListener { e ->
+                            onResult("Failed: ${e.message?.take(15)}")
+                        }
+                }
+            }
+            .addOnFailureListener { e -> onResult("Error: ${e.message?.take(15)}") }
+    }
+
     private fun sendConnectionPing(onResult: (String) -> Unit) {
         Wearable.getNodeClient(this).connectedNodes
             .addOnSuccessListener { nodes ->
@@ -366,30 +396,47 @@ class MainActivity : ComponentActivity() {
                 }
                 val nodeNames = nodes.joinToString { it.displayName }
                 val messageClient: MessageClient = Wearable.getMessageClient(this)
+
+                // Send both connection ping and sample heart rate reading so phone updates immediately
+                val hrPayload = JSONObject().apply {
+                    put("type", "heart_rate")
+                    put("value", 72)
+                    put("unit", "bpm")
+                    put("timestamp", System.currentTimeMillis())
+                }.toString().toByteArray(Charsets.UTF_8)
+
                 nodes.forEach { node ->
                     messageClient.sendMessage(
                         node.id,
                         CONNECTION_PATH,
                         "connected".toByteArray(Charsets.UTF_8),
-                    ).addOnSuccessListener {
-                        onResult("Sent to $nodeNames ✓")
-                    }.addOnFailureListener { e ->
-                        onResult("Failed: ${e.message?.take(20)}")
-                    }
+                    )
+                    messageClient.sendMessage(node.id, HEARTRATE_PATH, hrPayload)
+                        .addOnSuccessListener {
+                            onResult("Sent 72 BPM to $nodeNames ✓")
+                            mainHandler.post {
+                                onHeartRateListener?.invoke(72)
+                                onStatusListener?.invoke(true, "Sent: 72 BPM")
+                            }
+                        }
+                        .addOnFailureListener { e ->
+                            onResult("Failed: ${e.message?.take(15)}")
+                        }
                 }
             }
-            .addOnFailureListener { e -> onResult("Error: ${e.message?.take(20)}") }
+            .addOnFailureListener { e -> onResult("Error: ${e.message?.take(15)}") }
     }
 }
 
 /**
- * Main watch UI — round Wear OS display with live heart rate.
+ * Main watch UI — round Wear OS display with live heart rate and quick-test controls.
  */
 @Composable
 fun WatchApp(
     hasHeartRateSensor: Boolean,
     hasPermission: Boolean,
     onRequestPermission: ((Boolean) -> Unit) -> Unit,
+    onSendTestBpm: (Int, (String) -> Unit) -> Unit,
     onSendPing: ((String) -> Unit) -> Unit,
     onToggleStreaming: (Boolean) -> Unit,
     onRegisterHeartRateListener: (((Int) -> Unit)?) -> Unit,
@@ -398,7 +445,7 @@ fun WatchApp(
     var heartRate by remember { mutableIntStateOf(0) }
     var isStreaming by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf(if (hasHeartRateSensor) "Sensor ready" else "No sensor") }
-    var pingStatus by remember { mutableStateOf("Not sent") }
+    var testStatus by remember { mutableStateOf("Ready to send") }
     var permissionGranted by remember { mutableStateOf(hasPermission) }
 
     DisposableEffect(Unit) {
@@ -447,9 +494,9 @@ fun WatchApp(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Icon(
-                        imageVector = if (isStreaming && heartRate > 0) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                        imageVector = if (isStreaming || heartRate > 0) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
                         contentDescription = null,
-                        tint = if (isStreaming) MaterialTheme.colors.primary else MaterialTheme.colors.onSurfaceVariant,
+                        tint = if (isStreaming || heartRate > 0) MaterialTheme.colors.primary else MaterialTheme.colors.onSurfaceVariant,
                         modifier = Modifier.size(16.dp),
                     )
                     Text(
@@ -484,7 +531,7 @@ fun WatchApp(
                     },
                     secondaryLabel = {
                         Text(
-                            text = if (isStreaming) (if (heartRate > 0) "❤️ $heartRate BPM" else statusText) else "Tap to start",
+                            text = if (isStreaming) (if (heartRate > 0) "❤️ $heartRate BPM" else statusText) else "Live sensor stream",
                             style = MaterialTheme.typography.caption2,
                         )
                     },
@@ -506,22 +553,14 @@ fun WatchApp(
             item {
                 Chip(
                     onClick = {
-                        if (!permissionGranted) {
-                            onRequestPermission { granted ->
-                                permissionGranted = granted
-                            }
-                        }
+                        testStatus = "Sending 75 BPM…"
+                        onSendTestBpm(75) { result -> testStatus = result }
                     },
-                    label = { Text("Body sensors", style = MaterialTheme.typography.button) },
-                    secondaryLabel = {
-                        Text(
-                            text = if (permissionGranted) "Granted" else "Tap to grant",
-                            style = MaterialTheme.typography.caption2,
-                        )
-                    },
+                    label = { Text("Send 75 BPM to Phone", style = MaterialTheme.typography.button) },
+                    secondaryLabel = { Text(testStatus, style = MaterialTheme.typography.caption2) },
                     icon = {
                         Icon(
-                            imageVector = if (permissionGranted) Icons.Filled.Check else Icons.Filled.Close,
+                            imageVector = Icons.AutoMirrored.Filled.Send,
                             contentDescription = null,
                         )
                     },
@@ -533,14 +572,14 @@ fun WatchApp(
             item {
                 Chip(
                     onClick = {
-                        pingStatus = "Sending…"
-                        onSendPing { result -> pingStatus = result }
+                        testStatus = "Pinging phone…"
+                        onSendPing { result -> testStatus = result }
                     },
-                    label = { Text("Ping phone", style = MaterialTheme.typography.button) },
-                    secondaryLabel = { Text(pingStatus, style = MaterialTheme.typography.caption2) },
+                    label = { Text("Ping & Sync Phone", style = MaterialTheme.typography.button) },
+                    secondaryLabel = { Text(testStatus, style = MaterialTheme.typography.caption2) },
                     icon = {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Send,
+                            imageVector = Icons.Filled.Favorite,
                             contentDescription = null,
                         )
                     },

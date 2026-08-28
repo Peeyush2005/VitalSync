@@ -15,6 +15,7 @@ import 'health_repository.dart';
 /// - This repository maintains an in-memory chronological time series (newest-first, bounded).
 /// - If no data is available (e.g. before initial sensor read), [getLatestMeasurement]
 ///   returns `null` and [getMeasurementHistory] returns `[]` — strictly **zero synthetic backfill**.
+/// - Emits real-time updates through [watchLatestMeasurement] and [watchMeasurementHistory].
 class SamsungHealthRepository implements HealthRepository {
   SamsungHealthRepository({
     WatchHealthBridge? bridge,
@@ -29,6 +30,7 @@ class SamsungHealthRepository implements HealthRepository {
 
   final int _maxHistorySize;
   StreamSubscription<HealthMeasurement>? _subscription;
+  final _changeStreamController = StreamController<HealthMeasurement>.broadcast();
 
   final Map<HealthMetricType, List<HealthMeasurement>> _history = {
     HealthMetricType.heartRate: [],
@@ -39,12 +41,15 @@ class SamsungHealthRepository implements HealthRepository {
     recordMeasurement(measurement);
   }
 
-  /// Records a real measurement into chronological history (newest-first).
+  /// Records a real measurement into chronological history (newest-first) and notifies listeners.
   void recordMeasurement(HealthMeasurement measurement) {
     final list = _history.putIfAbsent(measurement.type, () => []);
     list.insert(0, measurement);
     if (list.length > _maxHistorySize) {
       list.removeRange(_maxHistorySize, list.length);
+    }
+    if (!_changeStreamController.isClosed) {
+      _changeStreamController.add(measurement);
     }
   }
 
@@ -71,9 +76,31 @@ class SamsungHealthRepository implements HealthRepository {
     return list.take(limit).toList();
   }
 
-  /// Disposes stream subscriptions.
+  @override
+  Stream<HealthMeasurement?> watchLatestMeasurement(
+    HealthMetricType type,
+  ) async* {
+    yield await getLatestMeasurement(type);
+    yield* _changeStreamController.stream
+        .where((m) => m.type == type)
+        .asyncMap((_) => getLatestMeasurement(type));
+  }
+
+  @override
+  Stream<List<HealthMeasurement>> watchMeasurementHistory(
+    HealthMetricType type, {
+    int limit = 50,
+  }) async* {
+    yield await getMeasurementHistory(type, limit: limit);
+    yield* _changeStreamController.stream
+        .where((m) => m.type == type)
+        .asyncMap((_) => getMeasurementHistory(type, limit: limit));
+  }
+
+  /// Disposes stream subscriptions and controller.
   void dispose() {
     _subscription?.cancel();
     _subscription = null;
+    _changeStreamController.close();
   }
 }

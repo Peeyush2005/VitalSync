@@ -5,22 +5,23 @@ import '../../data/models/health_metric_type.dart';
 import '../../data/repositories/health_repository_provider.dart';
 
 /// The most recent measurement of a given [HealthMetricType], or null if
-/// none is available.
+/// none is available yet. Re-evaluates reactively upon new incoming sensor readings.
 final latestMeasurementProvider =
-    FutureProvider.family<HealthMeasurement?, HealthMetricType>((
+    StreamProvider.family<HealthMeasurement?, HealthMetricType>((
       ref,
       type,
     ) {
       final repository = ref.watch(healthRepositoryProvider);
-      return repository.getLatestMeasurement(type);
+      return repository.watchLatestMeasurement(type);
     });
 
 /// Recent measurement history for a given [HealthMetricType], newest first.
+/// Re-evaluates reactively upon new incoming sensor readings.
 final measurementHistoryProvider =
-    FutureProvider.family<List<HealthMeasurement>, HealthMetricType>((
+    StreamProvider.family<List<HealthMeasurement>, HealthMetricType>((
       ref,
       type,
     ) {
       final repository = ref.watch(healthRepositoryProvider);
-      return repository.getMeasurementHistory(type);
+      return repository.watchMeasurementHistory(type);
     });

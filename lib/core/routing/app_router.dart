@@ -26,7 +26,7 @@ abstract final class AppRoutes {
 
 /// Top-level router configuration for VitalSync.
 final GoRouter appRouter = GoRouter(
-  initialLocation: AppRoutes.splash,
+  initialLocation: AppRoutes.home,
   routes: [
     GoRoute(
       path: AppRoutes.splash,
