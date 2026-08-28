@@ -13,13 +13,13 @@ import org.json.JSONObject
  * on any of the `/vitalsync/` paths. It runs even when [MainActivity] is
  * not in the foreground.
  *
- * Message protocol (defined by the watch app):
- * - Path `/vitalsync/connection`:  payload = "connected" (UTF-8 text).
- * - Path `/vitalsync/heartrate`:   payload = JSON:
- *   `{"type":"ping"|"reading","bpm":null|<int>,"timestamp":<epoch_ms>}`.
+ * Standard message protocol:
+ * - Path `/vitalsync/connection`: payload = "connected" (UTF-8 text).
+ * - Path `/vitalsync/heartrate`: payload = JSON:
+ *   `{"type":"heart_rate"|"ping","value":72|null,"unit":"bpm","timestamp":<epoch_ms>}`.
  *
  * All received data is written to [WatchDataHolder], which in turn notifies
- * [MainActivity]'s EventChannel → Flutter WatchHealthBridge.
+ * [MainActivity]'s EventChannels → Flutter WatchHealthBridge.
  */
 class WatchListenerService : WearableListenerService() {
 
@@ -45,24 +45,47 @@ class WatchListenerService : WearableListenerService() {
         WatchDataHolder.updateFromMessage(
             state = if (payload == "connected") "connected" else "disconnected",
             bpm = null,
+            timestampMs = System.currentTimeMillis(),
+            rawJson = null,
         )
     }
 
     private fun handleHeartRateMessage(event: MessageEvent) {
+        val rawJson = String(event.data, Charsets.UTF_8)
         try {
-            val json = JSONObject(String(event.data, Charsets.UTF_8))
+            val json = JSONObject(rawJson)
             val type = json.optString("type", "ping")
-            val bpm = if (json.isNull("bpm")) null else json.optInt("bpm")
-            Log.d(TAG, "Heart rate message: type=$type bpm=$bpm")
+            val value = if (!json.isNull("value")) {
+                json.optInt("value")
+            } else if (!json.isNull("bpm")) {
+                // Backward compatibility
+                json.optInt("bpm")
+            } else {
+                null
+            }
+            val timestamp = json.optLong("timestamp", System.currentTimeMillis())
+            Log.d(TAG, "Heart rate message: type=$type value=$value timestamp=$timestamp")
+
+            val state = if ((type == "heart_rate" || type == "reading") && value != null && value > 0) {
+                "measuring"
+            } else {
+                "connected"
+            }
 
             WatchDataHolder.updateFromMessage(
-                state = if (type == "reading" && bpm != null) "measuring" else "connected",
-                bpm = bpm,
+                state = state,
+                bpm = value,
+                timestampMs = timestamp,
+                rawJson = rawJson,
             )
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse heart rate message", e)
-            // Still count as a sign of life — phone is connected.
-            WatchDataHolder.updateFromMessage(state = "connected", bpm = null)
+            WatchDataHolder.updateFromMessage(
+                state = "connected",
+                bpm = null,
+                timestampMs = System.currentTimeMillis(),
+                rawJson = null,
+            )
         }
     }
 }

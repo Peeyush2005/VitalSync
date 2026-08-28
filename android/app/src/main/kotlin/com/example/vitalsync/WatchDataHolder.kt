@@ -4,27 +4,20 @@ import android.os.Handler
 import android.os.Looper
 
 /**
- * Thread-safe singleton holding the latest watch connection state and
- * heart-rate data received via [WatchListenerService].
+ * Thread-safe singleton holding the latest watch connection state,
+ * heart-rate data, and raw JSON stream received via [WatchListenerService].
  *
- * This is the single source of truth for watch data on the phone side.
- * [MainActivity]'s EventChannel reads from here, and the
- * [WatchListenerService] writes to it.
+ * Exposes two subscriber groups for Flutter:
+ * 1. Connection state events -> `com.vitalsync/watch_connection`
+ * 2. Raw health data JSON events -> `com.vitalsync/watch_health_data`
  *
- * STALENESS: If no message arrives within [STALENESS_TIMEOUT_MS], the
- * state auto-degrades to "disconnected" — we never silently claim to
- * be connected when we haven't heard from the watch in a while.
+ * STALENESS: If no message arrives within [STALENESS_TIMEOUT_MS] (30s),
+ * the state auto-degrades to "disconnected" so the UI never silently
+ * claims to be connected.
  */
 object WatchDataHolder {
 
-    /**
-     * How long (ms) before a connection with no new messages is considered
-     * stale and reverted to "disconnected". 30 seconds: the watch sends
-     * pings every 10s, so missing 3 in a row means something is wrong.
-     */
     private const val STALENESS_TIMEOUT_MS = 30_000L
-
-    // --- Mutable state (all access on main thread via handler) ---
 
     @Volatile
     var connectionState: String = "disconnected"
@@ -38,44 +31,71 @@ object WatchDataHolder {
     var lastUpdateTimestampMs: Long = 0L
         private set
 
-    // --- Listeners ---
+    @Volatile
+    var lastDataJson: String? = null
+        private set
 
-    private val listeners = mutableSetOf<(String) -> Unit>()
+    private val connectionListeners = mutableSetOf<(String) -> Unit>()
+    private val dataListeners = mutableSetOf<(String) -> Unit>()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val stalenessRunnable = Runnable { degradeToDisconnected() }
 
-    fun addListener(listener: (String) -> Unit) {
+    // --- Connection State Listeners ---
+
+    fun addConnectionListener(listener: (String) -> Unit) {
         mainHandler.post {
-            listeners.add(listener)
-            // Immediately emit the current state so the new subscriber is up to date.
+            connectionListeners.add(listener)
             listener(connectionState)
         }
     }
 
-    fun removeListener(listener: (String) -> Unit) {
-        mainHandler.post { listeners.remove(listener) }
+    fun removeConnectionListener(listener: (String) -> Unit) {
+        mainHandler.post { connectionListeners.remove(listener) }
+    }
+
+    // --- Data Stream Listeners ---
+
+    fun addDataListener(listener: (String) -> Unit) {
+        mainHandler.post {
+            dataListeners.add(listener)
+            lastDataJson?.let { listener(it) }
+        }
+    }
+
+    fun removeDataListener(listener: (String) -> Unit) {
+        mainHandler.post { dataListeners.remove(listener) }
     }
 
     /**
      * Called by [WatchListenerService] when a message arrives from the watch.
      *
-     * @param state  One of "connected", "measuring", "disconnected".
-     * @param bpm    Heart rate in beats-per-minute, or null for pings.
+     * @param state        One of "connected", "measuring", "disconnected".
+     * @param bpm          Heart rate in beats-per-minute, or null for pings.
+     * @param timestampMs  Timestamp of the reading in epoch milliseconds.
+     * @param rawJson      The full JSON string payload to push to Flutter.
      */
-    fun updateFromMessage(state: String, bpm: Int?) {
+    fun updateFromMessage(state: String, bpm: Int?, timestampMs: Long, rawJson: String? = null) {
         mainHandler.post {
             connectionState = state
             lastHeartRate = bpm
-            lastUpdateTimestampMs = System.currentTimeMillis()
-            notifyListeners()
+            lastUpdateTimestampMs = timestampMs
+            if (rawJson != null) {
+                lastDataJson = rawJson
+                notifyDataListeners(rawJson)
+            }
+            notifyConnectionListeners()
             resetStalenessTimer()
         }
     }
 
     // --- Internal ---
 
-    private fun notifyListeners() {
-        listeners.forEach { it(connectionState) }
+    private fun notifyConnectionListeners() {
+        connectionListeners.forEach { it(connectionState) }
+    }
+
+    private fun notifyDataListeners(json: String) {
+        dataListeners.forEach { it(json) }
     }
 
     private fun resetStalenessTimer() {
@@ -86,6 +106,7 @@ object WatchDataHolder {
     private fun degradeToDisconnected() {
         connectionState = "disconnected"
         lastHeartRate = null
-        notifyListeners()
+        lastDataJson = null
+        notifyConnectionListeners()
     }
 }

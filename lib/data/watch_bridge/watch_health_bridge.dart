@@ -1,60 +1,139 @@
+import 'dart:convert';
 import 'package:flutter/services.dart';
 
+import '../models/health_data_source.dart';
+import '../models/health_measurement.dart';
+import '../models/health_metric_type.dart';
 import '../models/watch_connection_state.dart';
 
-/// Thin wrapper around the Flutter <-> native Android platform channels
+/// Thin, hardened wrapper around the Flutter <-> native Android platform channels
 /// used to communicate with the Galaxy Watch bridge.
 ///
-/// This uses only Flutter's officially supported platform channel
-/// mechanism (`MethodChannel` / `EventChannel`) — see
-/// https://docs.flutter.dev/platform-integration/platform-channels.
-/// The native (Kotlin) side lives in `MainActivity.kt`.
+/// Channels:
+/// - MethodChannel (`com.vitalsync/health_bridge`): actions like `requestConnect()`.
+/// - EventChannel (`com.vitalsync/watch_connection`): connection state stream.
+/// - EventChannel (`com.vitalsync/watch_health_data`): live sensor data JSON stream.
 ///
-/// IMPORTANT: As of this milestone, the native side does not yet integrate
-/// the Samsung Health Sensor SDK (see README "Galaxy Watch4 integration
-/// status" for why). The connection state will therefore always report
-/// [WatchConnectionState.disconnected] and `requestConnect` will always
-/// fail with a clear, caught error - this is expected, not a bug, and the
-/// rest of the app (Dashboard, FakeHealthRepository) must keep working.
+/// Data Contract:
+/// ```json
+/// {
+///   "type": "heart_rate",
+///   "value": 72,
+///   "unit": "bpm",
+///   "timestamp": 1724835000000
+/// }
+/// ```
+///
+/// Converts live JSON payloads strictly into [HealthMeasurement] models
+/// with [HealthDataSource.galaxyWatch]. Never leaks native SDK types into Dart.
 class WatchHealthBridge {
   WatchHealthBridge({
     MethodChannel? methodChannel,
     EventChannel? connectionEventChannel,
-  }) : _methodChannel = methodChannel ?? const MethodChannel(_methodChannelName),
+    EventChannel? dataEventChannel,
+  }) : _methodChannel =
+           methodChannel ?? const MethodChannel(_methodChannelName),
        _connectionEventChannel =
-           connectionEventChannel ?? const EventChannel(_connectionChannelName);
+           connectionEventChannel ?? const EventChannel(_connectionChannelName),
+       _dataEventChannel =
+           dataEventChannel ?? const EventChannel(_dataChannelName);
 
   static const _methodChannelName = 'com.vitalsync/health_bridge';
   static const _connectionChannelName = 'com.vitalsync/watch_connection';
+  static const _dataChannelName = 'com.vitalsync/watch_health_data';
 
   final MethodChannel _methodChannel;
   final EventChannel _connectionEventChannel;
+  final EventChannel _dataEventChannel;
 
-  /// A live stream of the Watch <-> Phone connection state, as reported by
-  /// the native bridge. Never throws: any platform/stream error is mapped
-  /// to [WatchConnectionState.error] so the UI never crashes because the
-  /// watch/bridge is unavailable.
-  Stream<WatchConnectionState> connectionState() {
-    return _connectionEventChannel.receiveBroadcastStream().map((event) {
-      switch (event) {
-        case 'connecting':
-          return WatchConnectionState.connecting;
-        case 'connected':
-          return WatchConnectionState.connected;
-        case 'measuring':
-          return WatchConnectionState.measuring;
-        case 'disconnected':
-          return WatchConnectionState.disconnected;
-        default:
-          return WatchConnectionState.error;
+  /// Live stream of Watch connection state.
+  ///
+  /// Never throws: any channel errors are caught and yielded as
+  /// [WatchConnectionState.error].
+  Stream<WatchConnectionState> connectionState() async* {
+    try {
+      await for (final event
+          in _connectionEventChannel.receiveBroadcastStream()) {
+        switch (event) {
+          case 'connecting':
+            yield WatchConnectionState.connecting;
+          case 'connected':
+            yield WatchConnectionState.connected;
+          case 'measuring':
+            yield WatchConnectionState.measuring;
+          case 'disconnected':
+            yield WatchConnectionState.disconnected;
+          default:
+            yield WatchConnectionState.error;
+        }
       }
-    }).handleError((_) => WatchConnectionState.error);
+    } catch (_) {
+      yield WatchConnectionState.error;
+    }
   }
 
-  /// Requests that the native side start tracking heart rate on a
-  /// connected watch. Currently always fails with a [PlatformException]
-  /// because Samsung Health Sensor SDK integration is not yet implemented
-  /// (pending SDK access verification - see README).
+  /// Live stream of [HealthMeasurement] readings received from the watch.
+  ///
+  /// Safely handles malformed JSON, missing fields, or ping heartbeats
+  /// without throwing exceptions or polluting widget trees with raw maps.
+  Stream<HealthMeasurement> healthDataStream() async* {
+    try {
+      await for (final event in _dataEventChannel.receiveBroadcastStream()) {
+        final measurement = _parseMeasurement(event);
+        if (measurement != null) {
+          yield measurement;
+        }
+      }
+    } catch (_) {
+      // Unhappy path: channel error swallowed gracefully to protect UI
+    }
+  }
+
+  HealthMeasurement? _parseMeasurement(dynamic event) {
+    try {
+      if (event == null) return null;
+      final Map<String, dynamic> data =
+          event is String
+              ? jsonDecode(event) as Map<String, dynamic>
+              : Map<String, dynamic>.from(event as Map);
+
+      final typeStr = data['type'] as String?;
+      final dynamic rawValue = data['value'] ?? data['bpm'];
+      final unit = (data['unit'] as String?) ?? 'bpm';
+      final timestampRaw = data['timestamp'];
+
+      // Skip heartbeat pings or null values
+      if (rawValue == null || rawValue is! num || rawValue <= 0) {
+        return null;
+      }
+
+      if (typeStr != 'heart_rate' && typeStr != 'reading') {
+        return null;
+      }
+
+      final DateTime timestamp =
+          timestampRaw is int
+              ? DateTime.fromMillisecondsSinceEpoch(timestampRaw)
+              : DateTime.now();
+
+      return HealthMeasurement(
+        id: 'galaxy_watch_${timestamp.millisecondsSinceEpoch}',
+        userId: 'local_user',
+        type: HealthMetricType.heartRate,
+        value: rawValue.toDouble(),
+        unit: unit,
+        timestamp: timestamp,
+        source: HealthDataSource.galaxyWatch,
+        qualityScore: 1.0,
+        confidence: 1.0,
+      );
+    } catch (_) {
+      // Malformed JSON or corrupted fields gracefully ignored
+      return null;
+    }
+  }
+
+  /// Requests connection / measurement start from native layer.
   Future<void> requestConnect() async {
     await _methodChannel.invokeMethod<void>('connect');
   }

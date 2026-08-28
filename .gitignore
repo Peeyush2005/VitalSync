@@ -3,6 +3,7 @@
 *.log
 *.pyc
 *.swp
+*.zip
 .DS_Store
 .history
 migrate_working_dir/

@@ -269,8 +269,9 @@ class MainActivity : ComponentActivity() {
                     return@addOnSuccessListener
                 }
                 val payload = JSONObject().apply {
-                    put("type", if (bpm != null) "reading" else "ping")
-                    if (bpm != null) put("bpm", bpm) else put("bpm", JSONObject.NULL)
+                    put("type", if (bpm != null) "heart_rate" else "ping")
+                    if (bpm != null) put("value", bpm) else put("value", JSONObject.NULL)
+                    put("unit", "bpm")
                     put("timestamp", timestamp)
                 }.toString().toByteArray(Charsets.UTF_8)
 
