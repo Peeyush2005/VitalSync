@@ -6,6 +6,7 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -67,11 +68,11 @@ import org.json.JSONObject
 /**
  * VitalSync Wear OS watch app for Galaxy Watch4.
  *
- * Dual-Engine Live Biometric Tracking & Phone Communication:
- * 1. Primary: Samsung Health Sensor SDK ([HealthTrackingService] & [HealthTracker]).
- * 2. Fallback: Android Wear OS [SensorManager] ([Sensor.TYPE_HEART_RATE]).
- * 3. Streams live standardized JSON measurements over Google Play Services Wearable Data Layer.
- * 4. Provides direct "Send BPM to Phone" test triggers so data delivery can be verified instantly.
+ * Multi-Engine Biometric Architecture:
+ * 1. Samsung Health Sensor SDK ([HealthTrackingService] & [HealthTracker]).
+ * 2. Wear OS Platform Optical PPG Sensor ([SensorManager] with [Sensor.TYPE_HEART_RATE]).
+ * 3. Standardized JSON message protocol over Wearable Data Layer.
+ * 4. Immediate test verification controls.
  */
 class MainActivity : ComponentActivity() {
 
@@ -79,31 +80,43 @@ class MainActivity : ComponentActivity() {
         private const val TAG = "VitalSyncWatch"
         private const val CONNECTION_PATH = "/vitalsync/connection"
         private const val HEARTRATE_PATH = "/vitalsync/heartrate"
-        private const val FALLBACK_PING_INTERVAL_MS = 10_000L
+        private const val HEALTH_READ_HEART_RATE = "android.permission.health.READ_HEART_RATE"
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var isStreamingActive = false
 
-    // Samsung Health Sensor SDK objects
+    // Samsung Health Sensor SDK
     private var healthTrackingService: HealthTrackingService? = null
     private var healthTracker: HealthTracker? = null
 
-    // Android Platform SensorManager objects
+    // Android Platform SensorManager
     private var sensorManager: SensorManager? = null
     private var androidHeartRateSensor: Sensor? = null
     private var isAndroidSensorListening = false
 
-    // UI listeners
+    // UI callbacks
     private var onHeartRateListener: ((Int) -> Unit)? = null
     private var onStatusListener: ((Boolean, String) -> Unit)? = null
+
+    private val requiredPermissions: Array<String>
+        get() {
+            val list = mutableListOf(Manifest.permission.BODY_SENSORS)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                list.add(HEALTH_READ_HEART_RATE)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                list.add(Manifest.permission.ACTIVITY_RECOGNITION)
+            }
+            return list.toTypedArray()
+        }
 
     private val androidSensorEventListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent?) {
             if (event == null || event.sensor.type != Sensor.TYPE_HEART_RATE) return
             val bpm = event.values.firstOrNull()?.toInt() ?: 0
             val accuracy = event.accuracy
-            Log.d(TAG, "Wear OS SensorManager HR: $bpm accuracy=$accuracy")
+            Log.d(TAG, "Wear OS PPG Sensor Event: bpm=$bpm accuracy=$accuracy")
 
             if (bpm > 0) {
                 mainHandler.post {
@@ -113,28 +126,30 @@ class MainActivity : ComponentActivity() {
                 sendHeartRateMessage(bpm = bpm, timestamp = System.currentTimeMillis())
             } else {
                 mainHandler.post {
-                    onStatusListener?.invoke(true, "Reading pulse…")
+                    onStatusListener?.invoke(true, "Detecting pulse… (keep still)")
                 }
             }
         }
 
-        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
+            Log.d(TAG, "Sensor accuracy changed: $accuracy")
+        }
     }
 
     private val connectionListener = object : ConnectionListener {
         override fun onConnectionSuccess() {
-            Log.d(TAG, "Samsung Health Tracking Service connected successfully")
+            Log.d(TAG, "Samsung Health Tracking Service connected")
             onStatusListener?.invoke(true, "Samsung Sensor Active")
             startHeartRateTracker()
         }
 
         override fun onConnectionEnded() {
-            Log.d(TAG, "Samsung Health Tracking Service connection ended")
+            Log.d(TAG, "Samsung Health Tracking Service ended")
             onStatusListener?.invoke(false, "Sensor disconnected")
         }
 
         override fun onConnectionFailed(e: HealthTrackerException) {
-            Log.w(TAG, "Samsung Health Tracking Service connection failed: ${e.message} — falling back to Wear OS sensor", e)
+            Log.w(TAG, "Samsung Health Tracking connection failed: ${e.message} — falling back to Wear OS PPG sensor", e)
             startAndroidHeartRateSensor()
         }
     }
@@ -144,7 +159,7 @@ class MainActivity : ComponentActivity() {
             for (dataPoint in dataPoints) {
                 val hr = dataPoint.getValue(ValueKey.HeartRateSet.HEART_RATE)
                 val status = dataPoint.getValue(ValueKey.HeartRateSet.HEART_RATE_STATUS)
-                Log.d(TAG, "Samsung HR data: hr=$hr status=$status timestamp=${dataPoint.timestamp}")
+                Log.d(TAG, "Samsung HR dataPoint: hr=$hr status=$status timestamp=${dataPoint.timestamp}")
 
                 if (hr != null && hr > 0) {
                     mainHandler.post {
@@ -152,6 +167,10 @@ class MainActivity : ComponentActivity() {
                         onStatusListener?.invoke(true, "Live: $hr BPM")
                     }
                     sendHeartRateMessage(bpm = hr, timestamp = dataPoint.timestamp)
+                } else {
+                    mainHandler.post {
+                        onStatusListener?.invoke(true, "Measuring pulse…")
+                    }
                 }
             }
         }
@@ -161,16 +180,8 @@ class MainActivity : ComponentActivity() {
         }
 
         override fun onError(error: HealthTracker.TrackerError) {
-            Log.w(TAG, "Samsung Tracker error: $error — switching to Wear OS heart-rate sensor")
+            Log.w(TAG, "Samsung Tracker error: $error — starting Wear OS PPG sensor")
             startAndroidHeartRateSensor()
-        }
-    }
-
-    private val fallbackPingRunnable = object : Runnable {
-        override fun run() {
-            if (!isStreamingActive) return
-            sendHeartRateMessage(bpm = null, timestamp = System.currentTimeMillis())
-            mainHandler.postDelayed(this, FALLBACK_PING_INTERVAL_MS)
         }
     }
 
@@ -183,8 +194,8 @@ class MainActivity : ComponentActivity() {
             VitalSyncTheme {
                 WatchApp(
                     hasHeartRateSensor = hasHeartRateSensor(),
-                    hasPermission = hasBodySensorsPermission(),
-                    onRequestPermission = { onGranted -> requestBodySensorsPermission(onGranted) },
+                    hasPermission = hasAllPermissions(),
+                    onRequestPermission = { onGranted -> requestAllPermissions(onGranted) },
                     onSendTestBpm = { bpm, onResult -> sendTestBpm(bpm, onResult) },
                     onSendPing = { onResult -> sendConnectionPing(onResult) },
                     onToggleStreaming = { start -> toggleStreaming(start) },
@@ -205,30 +216,34 @@ class MainActivity : ComponentActivity() {
         return sm.getDefaultSensor(Sensor.TYPE_HEART_RATE) != null
     }
 
-    private fun hasBodySensorsPermission(): Boolean =
+    private fun hasAllPermissions(): Boolean =
         ContextCompat.checkSelfPermission(this, Manifest.permission.BODY_SENSORS) ==
             PackageManager.PERMISSION_GRANTED
 
-    private lateinit var permissionCallback: (Boolean) -> Unit
+    private var permissionCallback: ((Boolean) -> Unit)? = null
     private val requestPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted -> permissionCallback(granted) }
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { results ->
+        val allGranted = results.values.all { it }
+        permissionCallback?.invoke(allGranted)
+        permissionCallback = null
+    }
 
-    private fun requestBodySensorsPermission(onResult: (Boolean) -> Unit) {
-        if (hasBodySensorsPermission()) {
+    private fun requestAllPermissions(onResult: (Boolean) -> Unit) {
+        if (hasAllPermissions()) {
             onResult(true)
             return
         }
         permissionCallback = onResult
-        requestPermissionLauncher.launch(Manifest.permission.BODY_SENSORS)
+        requestPermissionLauncher.launch(requiredPermissions)
     }
 
     private fun toggleStreaming(start: Boolean) {
         if (start) {
-            if (!hasBodySensorsPermission()) {
-                requestBodySensorsPermission { granted ->
+            if (!hasAllPermissions()) {
+                requestAllPermissions { granted ->
                     if (granted) startStreaming()
-                    else onStatusListener?.invoke(false, "Permission required")
+                    else onStatusListener?.invoke(false, "Permissions required")
                 }
             } else {
                 startStreaming()
@@ -240,17 +255,19 @@ class MainActivity : ComponentActivity() {
 
     private fun startStreaming() {
         isStreamingActive = true
-        onStatusListener?.invoke(true, "Sensor active…")
+        onStatusListener?.invoke(true, "Activating sensor…")
 
-        startFallbackPingLoop()
-
+        // Try Samsung Health Tracking Service first
         try {
             healthTrackingService = HealthTrackingService(connectionListener, applicationContext)
             healthTrackingService?.connectService()
         } catch (t: Throwable) {
-            Log.w(TAG, "Could not initialize Samsung HealthTrackingService, falling back to Wear OS sensor", t)
+            Log.w(TAG, "Samsung SDK init failed, falling back to Wear OS sensor", t)
             startAndroidHeartRateSensor()
         }
+
+        // Also start Android platform optical PPG sensor immediately for guaranteed live reads
+        startAndroidHeartRateSensor()
     }
 
     private fun startHeartRateTracker() {
@@ -260,14 +277,12 @@ class MainActivity : ComponentActivity() {
 
             if (healthTracker != null) {
                 healthTracker?.setEventListener(trackerEventListener)
-                Log.d(TAG, "Samsung HeartTracker event listener attached")
+                Log.d(TAG, "Samsung HeartTracker event listener attached successfully")
             } else {
-                Log.w(TAG, "No heart tracker available from Samsung service, starting Wear OS sensor")
-                startAndroidHeartRateSensor()
+                Log.w(TAG, "Samsung HeartTracker null, using Wear OS sensor")
             }
         } catch (t: Throwable) {
-            Log.e(TAG, "Failed to start Samsung HeartTracker, starting Wear OS sensor", t)
-            startAndroidHeartRateSensor()
+            Log.e(TAG, "Failed to start Samsung HeartTracker", t)
         }
     }
 
@@ -277,32 +292,26 @@ class MainActivity : ComponentActivity() {
             val sm = sensorManager ?: (getSystemService(SENSOR_SERVICE) as SensorManager)
             val hrSensor = androidHeartRateSensor ?: sm.getDefaultSensor(Sensor.TYPE_HEART_RATE)
             if (hrSensor != null) {
-                sm.registerListener(
+                val registered = sm.registerListener(
                     androidSensorEventListener,
                     hrSensor,
-                    SensorManager.SENSOR_DELAY_NORMAL,
+                    SensorManager.SENSOR_DELAY_FASTEST,
                 )
-                isAndroidSensorListening = true
+                isAndroidSensorListening = registered
                 mainHandler.post {
-                    onStatusListener?.invoke(true, "Reading pulse…")
+                    onStatusListener?.invoke(true, "Sensor active — reading…")
                 }
-                Log.d(TAG, "Registered Android SensorManager heart rate listener")
+                Log.d(TAG, "Registered Wear OS SensorManager heart rate listener (registered=$registered)")
             } else {
-                Log.w(TAG, "No Android heart rate sensor available, using ping stream")
+                Log.w(TAG, "No Android heart rate sensor available on device")
             }
         } catch (t: Throwable) {
-            Log.e(TAG, "Failed to register Android SensorManager listener", t)
+            Log.e(TAG, "Failed to register SensorManager listener", t)
         }
-    }
-
-    private fun startFallbackPingLoop() {
-        mainHandler.removeCallbacks(fallbackPingRunnable)
-        mainHandler.post(fallbackPingRunnable)
     }
 
     private fun stopStreaming() {
         isStreamingActive = false
-        mainHandler.removeCallbacks(fallbackPingRunnable)
 
         try {
             healthTracker?.unsetEventListener()
@@ -325,7 +334,7 @@ class MainActivity : ComponentActivity() {
         onStatusListener?.invoke(false, "Stopped")
     }
 
-    private fun sendHeartRateMessage(bpm: Int?, timestamp: Long) {
+    private fun sendHeartRateMessage(bpm: Int, timestamp: Long) {
         Wearable.getNodeClient(this).connectedNodes
             .addOnSuccessListener { nodes ->
                 if (nodes.isEmpty()) {
@@ -333,8 +342,8 @@ class MainActivity : ComponentActivity() {
                     return@addOnSuccessListener
                 }
                 val payload = JSONObject().apply {
-                    put("type", if (bpm != null) "heart_rate" else "ping")
-                    if (bpm != null) put("value", bpm) else put("value", JSONObject.NULL)
+                    put("type", "heart_rate")
+                    put("value", bpm)
                     put("unit", "bpm")
                     put("timestamp", timestamp)
                 }.toString().toByteArray(Charsets.UTF_8)
@@ -343,7 +352,7 @@ class MainActivity : ComponentActivity() {
                 nodes.forEach { node ->
                     messageClient.sendMessage(node.id, HEARTRATE_PATH, payload)
                         .addOnSuccessListener {
-                            Log.d(TAG, "Heart rate sent to node ${node.displayName} (${bpm ?: "ping"})")
+                            Log.d(TAG, "Heart rate $bpm BPM sent to node ${node.displayName}")
                         }
                         .addOnFailureListener { e ->
                             Log.w(TAG, "Failed to send to node ${node.displayName}: ${e.message}")
@@ -368,11 +377,9 @@ class MainActivity : ComponentActivity() {
                 }.toString().toByteArray(Charsets.UTF_8)
 
                 val messageClient: MessageClient = Wearable.getMessageClient(this)
-                var sentCount = 0
                 nodes.forEach { node ->
                     messageClient.sendMessage(node.id, HEARTRATE_PATH, payload)
                         .addOnSuccessListener {
-                            sentCount++
                             onResult("Sent $bpm BPM to phone ✓")
                             mainHandler.post {
                                 onHeartRateListener?.invoke(bpm)
@@ -397,7 +404,6 @@ class MainActivity : ComponentActivity() {
                 val nodeNames = nodes.joinToString { it.displayName }
                 val messageClient: MessageClient = Wearable.getMessageClient(this)
 
-                // Send both connection ping and sample heart rate reading so phone updates immediately
                 val hrPayload = JSONObject().apply {
                     put("type", "heart_rate")
                     put("value", 72)
