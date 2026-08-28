@@ -7,11 +7,15 @@
 .history
 migrate_working_dir/
 
-# IntelliJ / Android Studio related
+# Local progress notes (not for GitHub)
+PROGRESS.md
+
+# IntelliJ / Android Studio / VS Code related
 *.iml
 *.ipr
 *.iws
 .idea/
+.vscode/
 
 # Gradle related
 .gradle/

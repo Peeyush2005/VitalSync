@@ -16,16 +16,18 @@ import io.flutter.plugin.common.MethodChannel
  * - [CONNECTION_EVENT_CHANNEL]: streams the current Watch connection
  *   state ("disconnected" | "connecting" | "connected" | "measuring").
  *
- * IMPORTANT (Milestone 4 status): Samsung Health Sensor SDK integration is
- * NOT implemented here yet. Downloading the SDK requires signing in with a
- * Samsung Developer account, and without the SDK artifact its exact
- * Kotlin API surface could not be verified against live documentation -
- * guessing class/method names is explicitly disallowed by project rules.
- * See README "Galaxy Watch4 integration status" for details.
+ * Watch data flow:
+ *   Watch app -> MessageClient -> [WatchListenerService] -> [WatchDataHolder]
+ *   -> this EventChannel -> Flutter WatchHealthBridge -> Dashboard UI
  *
- * Until that integration exists, this bridge honestly reports
- * "disconnected" and rejects connect requests with a clear error, instead
- * of fabricating a fake connection or fake heart-rate data.
+ * IMPORTANT (Milestone 4 status): Samsung Health Sensor SDK integration is
+ * NOT implemented here yet. The "connect" MethodChannel still returns an
+ * error. However, the EventChannel now reads **real** connection state from
+ * [WatchDataHolder], which is updated by [WatchListenerService] whenever
+ * a message arrives from the watch via Wear OS Data Layer.
+ *
+ * Without a second Android phone paired to the watch, end-to-end message
+ * delivery cannot be verified — but the plumbing is complete and honest.
  */
 class MainActivity : FlutterActivity() {
     companion object {
@@ -51,16 +53,20 @@ class MainActivity : FlutterActivity() {
 
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, CONNECTION_EVENT_CHANNEL)
             .setStreamHandler(object : EventChannel.StreamHandler {
+                private var listener: ((String) -> Unit)? = null
+
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
-                    // No real Watch data source is wired up yet, so the only
-                    // honest state to report is "disconnected".
-                    events.success("disconnected")
+                    // Register with WatchDataHolder — it will immediately emit the
+                    // current state and then push updates as they arrive from the
+                    // WatchListenerService.
+                    listener = { state -> events.success(state) }
+                    WatchDataHolder.addListener(listener!!)
                 }
 
                 override fun onCancel(arguments: Any?) {
-                    // Nothing to clean up: no tracker/session was started.
+                    listener?.let { WatchDataHolder.removeListener(it) }
+                    listener = null
                 }
             })
     }
 }
-

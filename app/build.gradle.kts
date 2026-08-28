@@ -36,14 +36,29 @@ android {
 }
 
 dependencies {
+    // Wear Compose — round-screen-aware Material components and foundation.
+    // https://developer.android.com/reference/kotlin/androidx/wear/compose/material/package-summary
+    implementation("androidx.wear.compose:compose-material:1.6.2")
+    implementation("androidx.wear.compose:compose-foundation:1.6.2")
+
+    // Core Compose (UI, graphics, tooling) — needed by Wear Compose.
     implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation("androidx.compose.material:material-icons-core")
+
+    implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+
+    // Samsung Health Sensor SDK (v1.4.1) for Galaxy Watch4 sensor access.
+    implementation(files("libs/samsung-health-sensor-api-1.4.1.aar"))
+
+    // Wear OS <-> phone communication (Google Play services Data Layer API).
+    // Verified: https://developer.android.com/training/wearables/data/overview
+    implementation("com.google.android.gms:play-services-wearable:20.0.1")
+
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

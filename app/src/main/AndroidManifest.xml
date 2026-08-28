@@ -2,6 +2,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <uses-feature android:name="android.hardware.type.watch" />
+    <!-- Standard Android heart-rate sensor permission. Actual continuous
+         tracking will use the Samsung Health Sensor SDK once available;
+         see README "Galaxy Watch4 integration status". -->
+    <uses-permission android:name="android.permission.BODY_SENSORS" />
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -11,6 +17,12 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.VitalSync">
+        <!-- This Wear app works standalone (doesn't require the phone app
+             to be installed first). See:
+             https://developer.android.com/training/wearables/apps/standalone-apps -->
+        <meta-data
+            android:name="com.google.android.wearable.standalone"
+            android:value="true" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

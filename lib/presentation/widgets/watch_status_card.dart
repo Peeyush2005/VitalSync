@@ -6,20 +6,33 @@ import '../../data/models/watch_connection_state.dart';
 ///
 /// ```
 /// Galaxy Watch
-/// ● Connected
+/// ● Connected • Updated just now
 /// ```
 ///
-/// or, when no watch is available (the expected state until Milestone 4's
-/// Samsung SDK integration is completed):
+/// or, when no watch is available:
 ///
 /// ```
 /// Galaxy Watch
 /// ○ Not connected
 /// ```
 class WatchStatusCard extends StatelessWidget {
-  const WatchStatusCard({super.key, required this.state});
+  const WatchStatusCard({
+    super.key,
+    required this.state,
+    this.lastUpdated,
+  });
 
   final WatchConnectionState state;
+  final DateTime? lastUpdated;
+
+  String? _formatLastUpdated() {
+    if (lastUpdated == null) return null;
+    final diff = DateTime.now().difference(lastUpdated!);
+    if (diff.inSeconds < 10) return 'Updated just now';
+    if (diff.inSeconds < 60) return 'Updated ${diff.inSeconds}s ago';
+    if (diff.inMinutes < 60) return 'Updated ${diff.inMinutes}m ago';
+    return 'Updated ${diff.inHours}h ago';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -32,6 +45,8 @@ class WatchStatusCard extends StatelessWidget {
       WatchConnectionState.error => colorScheme.error,
       WatchConnectionState.disconnected => colorScheme.onSurfaceVariant,
     };
+
+    final updatedText = isActive ? _formatLastUpdated() : null;
 
     return Card(
       margin: EdgeInsets.zero,
@@ -58,9 +73,14 @@ class WatchStatusCard extends StatelessWidget {
                         color: dotColor,
                       ),
                       const SizedBox(width: 6),
-                      Text(
-                        state.label,
-                        style: Theme.of(context).textTheme.bodyMedium,
+                      Flexible(
+                        child: Text(
+                          updatedText != null
+                              ? '${state.label} • $updatedText'
+                              : state.label,
+                          style: Theme.of(context).textTheme.bodyMedium,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                     ],
                   ),

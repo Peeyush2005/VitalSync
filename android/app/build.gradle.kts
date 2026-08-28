@@ -54,6 +54,13 @@ kotlin {
     }
 }
 
+dependencies {
+    // Wear OS <-> phone communication (Google Play services Data Layer API).
+    // Receives messages from the watch app's MessageClient.
+    // Same version as the watch app for protocol consistency.
+    implementation("com.google.android.gms:play-services-wearable:20.0.1")
+}
+
 flutter {
     source = "../.."
 }

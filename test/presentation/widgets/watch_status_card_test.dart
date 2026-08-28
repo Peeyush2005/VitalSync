@@ -32,4 +32,22 @@ void main() {
 
     expect(find.text('Connected'), findsOneWidget);
   });
+
+  testWidgets('shows staleness indicator when connected with lastUpdated', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: WatchStatusCard(
+            state: WatchConnectionState.connected,
+            lastUpdated: DateTime.now().subtract(const Duration(seconds: 15)),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Galaxy Watch'), findsOneWidget);
+    expect(find.textContaining('Connected • Updated 15s ago'), findsOneWidget);
+  });
 }
