@@ -3,6 +3,8 @@ package com.example.vitalsync
 import android.Manifest
 import android.content.pm.PackageManager
 import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Bundle
 import android.os.Handler
@@ -65,11 +67,11 @@ import org.json.JSONObject
 /**
  * VitalSync Wear OS watch app for Galaxy Watch4.
  *
- * Real Samsung Health Sensor SDK Integration:
- * - Uses [HealthTrackingService] and [HealthTracker] for real-time PPG/heart-rate.
- * - Streams live BPM readings over Wear OS Data Layer to paired phone.
- * - Fallback ping loop if SDK is unavailable (e.g. emulator).
- * - Built with Wear Compose for round AMOLED displays.
+ * Dual-Engine Live Biometric Tracking:
+ * 1. Primary: Samsung Health Sensor SDK ([HealthTrackingService] & [HealthTracker]).
+ * 2. Fallback: Android Wear OS [SensorManager] ([Sensor.TYPE_HEART_RATE]).
+ * 3. Streams live standardized JSON measurements over Google Play Services Wearable Data Layer.
+ * 4. Built with Wear Compose for round AMOLED displays.
  */
 class MainActivity : ComponentActivity() {
 
@@ -87,9 +89,33 @@ class MainActivity : ComponentActivity() {
     private var healthTrackingService: HealthTrackingService? = null
     private var healthTracker: HealthTracker? = null
 
+    // Android Platform SensorManager objects
+    private var sensorManager: SensorManager? = null
+    private var androidHeartRateSensor: Sensor? = null
+    private var isAndroidSensorListening = false
+
     // UI listeners
     private var onHeartRateListener: ((Int) -> Unit)? = null
     private var onStatusListener: ((Boolean, String) -> Unit)? = null
+
+    private val androidSensorEventListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent?) {
+            if (event == null || event.sensor.type != Sensor.TYPE_HEART_RATE) return
+            val bpm = event.values.firstOrNull()?.toInt() ?: 0
+            val accuracy = event.accuracy
+            Log.d(TAG, "Wear OS SensorManager HR: $bpm accuracy=$accuracy")
+
+            if (bpm > 0) {
+                mainHandler.post {
+                    onHeartRateListener?.invoke(bpm)
+                    onStatusListener?.invoke(true, "Live: $bpm BPM")
+                }
+                sendHeartRateMessage(bpm = bpm, timestamp = System.currentTimeMillis())
+            }
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+    }
 
     private val connectionListener = object : ConnectionListener {
         override fun onConnectionSuccess() {
@@ -104,10 +130,8 @@ class MainActivity : ComponentActivity() {
         }
 
         override fun onConnectionFailed(e: HealthTrackerException) {
-            Log.w(TAG, "Samsung Health Tracking Service connection failed: ${e.message}", e)
-            onStatusListener?.invoke(true, "Using fallback stream")
-            // Fall back to periodic ping if Samsung service is unavailable
-            startFallbackPingLoop()
+            Log.w(TAG, "Samsung Health Tracking Service connection failed: ${e.message} — falling back to Wear OS sensor", e)
+            startAndroidHeartRateSensor()
         }
     }
 
@@ -133,10 +157,11 @@ class MainActivity : ComponentActivity() {
         }
 
         override fun onError(error: HealthTracker.TrackerError) {
-            Log.e(TAG, "Tracker error: $error")
+            Log.w(TAG, "Samsung Tracker error: $error — switching to Wear OS heart-rate sensor")
             mainHandler.post {
-                onStatusListener?.invoke(isStreamingActive, "Sensor error: $error")
+                onStatusListener?.invoke(isStreamingActive, "Wear OS Sensor Active")
             }
+            startAndroidHeartRateSensor()
         }
     }
 
@@ -150,6 +175,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
+        androidHeartRateSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_HEART_RATE)
+
         setContent {
             VitalSyncTheme {
                 WatchApp(
@@ -171,8 +199,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun hasHeartRateSensor(): Boolean {
-        val sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
-        return sensorManager.getDefaultSensor(Sensor.TYPE_HEART_RATE) != null
+        val sm = getSystemService(SENSOR_SERVICE) as SensorManager
+        return sm.getDefaultSensor(Sensor.TYPE_HEART_RATE) != null
     }
 
     private fun hasBodySensorsPermission(): Boolean =
@@ -212,13 +240,15 @@ class MainActivity : ComponentActivity() {
         isStreamingActive = true
         onStatusListener?.invoke(true, "Connecting to sensor…")
 
+        // Start fallback heartbeat ping so phone knows watch is active immediately
+        startFallbackPingLoop()
+
         try {
             healthTrackingService = HealthTrackingService(connectionListener, applicationContext)
             healthTrackingService?.connectService()
         } catch (t: Throwable) {
-            Log.w(TAG, "Could not initialize Samsung HealthTrackingService", t)
-            onStatusListener?.invoke(true, "Fallback streaming")
-            startFallbackPingLoop()
+            Log.w(TAG, "Could not initialize Samsung HealthTrackingService, falling back to Wear OS sensor", t)
+            startAndroidHeartRateSensor()
         }
     }
 
@@ -231,12 +261,39 @@ class MainActivity : ComponentActivity() {
                 healthTracker?.setEventListener(trackerEventListener)
                 Log.d(TAG, "Samsung HeartTracker event listener attached")
             } else {
-                Log.w(TAG, "No heart tracker available from Samsung service, starting fallback")
-                startFallbackPingLoop()
+                Log.w(TAG, "No heart tracker available from Samsung service, starting Wear OS sensor")
+                startAndroidHeartRateSensor()
             }
         } catch (t: Throwable) {
-            Log.e(TAG, "Failed to start Samsung HeartTracker", t)
-            startFallbackPingLoop()
+            Log.e(TAG, "Failed to start Samsung HeartTracker, starting Wear OS sensor", t)
+            startAndroidHeartRateSensor()
+        }
+    }
+
+    private fun startAndroidHeartRateSensor() {
+        if (isAndroidSensorListening) return
+        try {
+            val sm = sensorManager ?: (getSystemService(SENSOR_SERVICE) as SensorManager)
+            val hrSensor = androidHeartRateSensor ?: sm.getDefaultSensor(Sensor.TYPE_HEART_RATE)
+            if (hrSensor != null) {
+                sm.registerListener(
+                    androidSensorEventListener,
+                    hrSensor,
+                    SensorManager.SENSOR_DELAY_NORMAL,
+                )
+                isAndroidSensorListening = true
+                mainHandler.post {
+                    onStatusListener?.invoke(true, "Sensor: Reading…")
+                }
+                Log.d(TAG, "Registered Android SensorManager heart rate listener")
+            } else {
+                Log.w(TAG, "No Android heart rate sensor available, using ping stream")
+                mainHandler.post {
+                    onStatusListener?.invoke(true, "Fallback streaming")
+                }
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "Failed to register Android SensorManager listener", t)
         }
     }
 
@@ -249,6 +306,7 @@ class MainActivity : ComponentActivity() {
         isStreamingActive = false
         mainHandler.removeCallbacks(fallbackPingRunnable)
 
+        // Stop Samsung Health tracker
         try {
             healthTracker?.unsetEventListener()
             healthTracker = null
@@ -256,6 +314,16 @@ class MainActivity : ComponentActivity() {
             healthTrackingService = null
         } catch (t: Throwable) {
             Log.w(TAG, "Error disconnecting Samsung tracking service", t)
+        }
+
+        // Stop Android SensorManager
+        try {
+            if (isAndroidSensorListening) {
+                sensorManager?.unregisterListener(androidSensorEventListener)
+                isAndroidSensorListening = false
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "Error unregistering Android SensorManager listener", t)
         }
 
         onStatusListener?.invoke(false, "Stopped")
@@ -279,10 +347,10 @@ class MainActivity : ComponentActivity() {
                 nodes.forEach { node ->
                     messageClient.sendMessage(node.id, HEARTRATE_PATH, payload)
                         .addOnSuccessListener {
-                            Log.d(TAG, "Heart rate sent to phone (${bpm ?: "ping"})")
+                            Log.d(TAG, "Heart rate sent to node ${node.displayName} (${bpm ?: "ping"})")
                         }
                         .addOnFailureListener { e ->
-                            Log.w(TAG, "Failed to send to phone: ${e.message}")
+                            Log.w(TAG, "Failed to send to node ${node.displayName}: ${e.message}")
                         }
                 }
             }
@@ -293,9 +361,10 @@ class MainActivity : ComponentActivity() {
         Wearable.getNodeClient(this).connectedNodes
             .addOnSuccessListener { nodes ->
                 if (nodes.isEmpty()) {
-                    onResult("No phone nearby")
+                    onResult("No phone paired")
                     return@addOnSuccessListener
                 }
+                val nodeNames = nodes.joinToString { it.displayName }
                 val messageClient: MessageClient = Wearable.getMessageClient(this)
                 nodes.forEach { node ->
                     messageClient.sendMessage(
@@ -303,7 +372,7 @@ class MainActivity : ComponentActivity() {
                         CONNECTION_PATH,
                         "connected".toByteArray(Charsets.UTF_8),
                     ).addOnSuccessListener {
-                        onResult("Sent ✓")
+                        onResult("Sent to $nodeNames ✓")
                     }.addOnFailureListener { e ->
                         onResult("Failed: ${e.message?.take(20)}")
                     }
@@ -326,21 +395,19 @@ fun WatchApp(
     onRegisterHeartRateListener: (((Int) -> Unit)?) -> Unit,
     onRegisterStatusListener: (((Boolean, String) -> Unit)?) -> Unit,
 ) {
-    var permissionStatus by remember {
-        mutableStateOf(if (hasPermission) "Granted" else "Not granted")
-    }
-    var pingStatus by remember { mutableStateOf("Not sent") }
+    var heartRate by remember { mutableIntStateOf(0) }
     var isStreaming by remember { mutableStateOf(false) }
-    var streamStatus by remember { mutableStateOf("Tap to start") }
-    var currentBpm by remember { mutableIntStateOf(0) }
+    var statusText by remember { mutableStateOf(if (hasHeartRateSensor) "Sensor ready" else "No sensor") }
+    var pingStatus by remember { mutableStateOf("Not sent") }
+    var permissionGranted by remember { mutableStateOf(hasPermission) }
 
     DisposableEffect(Unit) {
-        onRegisterHeartRateListener { bpm ->
-            currentBpm = bpm
+        onRegisterHeartRateListener { hr ->
+            heartRate = hr
         }
-        onRegisterStatusListener { active, status ->
-            isStreaming = active
-            streamStatus = status
+        onRegisterStatusListener { streaming, status ->
+            isStreaming = streaming
+            statusText = status
         }
         onDispose {
             onRegisterHeartRateListener(null)
@@ -356,98 +423,75 @@ fun WatchApp(
         positionIndicator = { PositionIndicator(scalingLazyListState = listState) },
     ) {
         ScalingLazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
             state = listState,
             horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // Title
             item {
+                Spacer(modifier = Modifier.height(20.dp))
                 Text(
                     text = "VitalSync",
-                    style = MaterialTheme.typography.title2,
+                    style = MaterialTheme.typography.title1,
                     color = MaterialTheme.colors.primary,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(),
                 )
             }
 
-            // Live HR display or sensor status
             item {
-                if (currentBpm > 0 && isStreaming) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Favorite,
-                            contentDescription = "Live Heart Rate",
-                            tint = MaterialTheme.colors.error,
-                            modifier = Modifier.size(20.dp),
-                        )
-                        Text(
-                            text = " $currentBpm BPM",
-                            style = MaterialTheme.typography.title3,
-                            color = MaterialTheme.colors.onBackground,
-                            modifier = Modifier.padding(start = 4.dp),
-                        )
-                    }
-                } else {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 2.dp),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.FavoriteBorder,
-                            contentDescription = "Heart rate sensor",
-                            tint = if (hasHeartRateSensor) MaterialTheme.colors.secondary
-                                   else MaterialTheme.colors.error,
-                            modifier = Modifier.size(14.dp),
-                        )
-                        Text(
-                            text = if (hasHeartRateSensor) " Samsung SDK ready" else " No HR sensor",
-                            style = MaterialTheme.typography.caption2,
-                            color = if (hasHeartRateSensor) MaterialTheme.colors.secondary
-                                    else MaterialTheme.colors.error,
-                            modifier = Modifier.padding(start = 4.dp),
-                        )
-                    }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(
+                        imageVector = if (isStreaming && heartRate > 0) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                        contentDescription = null,
+                        tint = if (isStreaming) MaterialTheme.colors.primary else MaterialTheme.colors.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text(
+                        text = if (heartRate > 0) " $heartRate BPM" else " $statusText",
+                        style = MaterialTheme.typography.body2,
+                        color = if (heartRate > 0) MaterialTheme.colors.primary else MaterialTheme.colors.onSurfaceVariant,
+                    )
                 }
             }
 
-            // Samsung Sensor Streaming toggle chip
             item {
                 Chip(
-                    modifier = Modifier.fillMaxWidth(0.9f),
                     onClick = {
-                        val next = !isStreaming
-                        isStreaming = next
-                        onToggleStreaming(next)
+                        if (!permissionGranted) {
+                            onRequestPermission { granted ->
+                                permissionGranted = granted
+                                if (granted) {
+                                    isStreaming = !isStreaming
+                                    onToggleStreaming(isStreaming)
+                                }
+                            }
+                        } else {
+                            isStreaming = !isStreaming
+                            onToggleStreaming(isStreaming)
+                        }
                     },
                     label = {
                         Text(
-                            text = if (isStreaming) "Sensor: ACTIVE" else "Start tracking",
-                            style = MaterialTheme.typography.caption1,
-                            maxLines = 1,
+                            text = if (isStreaming) "Stop tracking" else "Start tracking",
+                            style = MaterialTheme.typography.button,
                         )
                     },
                     secondaryLabel = {
                         Text(
-                            text = streamStatus,
+                            text = if (isStreaming) (if (heartRate > 0) "❤️ $heartRate BPM" else statusText) else "Tap to start",
                             style = MaterialTheme.typography.caption2,
-                            maxLines = 1,
                         )
                     },
                     icon = {
                         Icon(
                             imageVector = if (isStreaming) Icons.Filled.Check else Icons.Filled.PlayArrow,
                             contentDescription = null,
-                            modifier = Modifier.size(ChipDefaults.IconSize),
                         )
                     },
                     colors = if (isStreaming) {
@@ -455,80 +499,58 @@ fun WatchApp(
                     } else {
                         ChipDefaults.secondaryChipColors()
                     },
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
 
-            // Permission chip
             item {
                 Chip(
-                    modifier = Modifier.fillMaxWidth(0.9f),
                     onClick = {
-                        onRequestPermission { granted ->
-                            permissionStatus = if (granted) "Granted" else "Denied"
+                        if (!permissionGranted) {
+                            onRequestPermission { granted ->
+                                permissionGranted = granted
+                            }
                         }
                     },
-                    label = {
-                        Text(
-                            text = "Body sensors",
-                            style = MaterialTheme.typography.caption1,
-                            maxLines = 1,
-                        )
-                    },
+                    label = { Text("Body sensors", style = MaterialTheme.typography.button) },
                     secondaryLabel = {
                         Text(
-                            text = permissionStatus,
+                            text = if (permissionGranted) "Granted" else "Tap to grant",
                             style = MaterialTheme.typography.caption2,
-                            maxLines = 1,
                         )
                     },
                     icon = {
                         Icon(
-                            imageVector = if (permissionStatus == "Granted")
-                                Icons.Filled.Check else Icons.Filled.Close,
+                            imageVector = if (permissionGranted) Icons.Filled.Check else Icons.Filled.Close,
                             contentDescription = null,
-                            modifier = Modifier.size(ChipDefaults.IconSize),
                         )
                     },
                     colors = ChipDefaults.secondaryChipColors(),
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
 
-            // One-off Ping chip
             item {
                 Chip(
-                    modifier = Modifier.fillMaxWidth(0.9f),
                     onClick = {
                         pingStatus = "Sending…"
                         onSendPing { result -> pingStatus = result }
                     },
-                    label = {
-                        Text(
-                            text = "Ping phone",
-                            style = MaterialTheme.typography.caption1,
-                            maxLines = 1,
-                        )
-                    },
-                    secondaryLabel = {
-                        Text(
-                            text = pingStatus,
-                            style = MaterialTheme.typography.caption2,
-                            maxLines = 1,
-                        )
-                    },
+                    label = { Text("Ping phone", style = MaterialTheme.typography.button) },
+                    secondaryLabel = { Text(pingStatus, style = MaterialTheme.typography.caption2) },
                     icon = {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.Send,
                             contentDescription = null,
-                            modifier = Modifier.size(ChipDefaults.IconSize),
                         )
                     },
                     colors = ChipDefaults.secondaryChipColors(),
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
 
-            // Clearance spacer for round display
             item {
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(20.dp))
             }
         }
     }

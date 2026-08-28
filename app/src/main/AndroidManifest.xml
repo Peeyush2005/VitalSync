@@ -7,6 +7,8 @@
          tracking will use the Samsung Health Sensor SDK once available;
          see README "Galaxy Watch4 integration status". -->
     <uses-permission android:name="android.permission.BODY_SENSORS" />
+    <uses-permission android:name="android.permission.BODY_SENSORS_BACKGROUND" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:allowBackup="true"

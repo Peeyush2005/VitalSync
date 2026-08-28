@@ -1,32 +1,132 @@
 package com.example.vitalsync
 
+import android.os.Bundle
+import android.util.Log
+import com.google.android.gms.wearable.MessageClient
+import com.google.android.gms.wearable.MessageEvent
+import com.google.android.gms.wearable.Wearable
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
+import org.json.JSONObject
 
 /**
  * Flutter <-> native Android bridge entry point.
  *
- * Exposes two EventChannels and one MethodChannel used by VitalSync's
- * Galaxy Watch integration (see `lib/data/watch_bridge/watch_health_bridge.dart`):
+ * Implements [MessageClient.OnMessageReceivedListener] to directly receive
+ * messages from the Galaxy Watch via Google Play Services Wearable while
+ * the app is in the foreground, complementing [WatchListenerService] which
+ * handles background delivery.
  *
- * - [METHOD_CHANNEL] ("connect"): intended to trigger manual connection/start.
- * - [CONNECTION_EVENT_CHANNEL] (`com.vitalsync/watch_connection`):
- *   streams the current Watch connection state ("disconnected" | "connecting" | "connected" | "measuring").
- * - [DATA_EVENT_CHANNEL] (`com.vitalsync/watch_health_data`):
- *   streams standardized JSON payloads received from the watch over the Wear OS Data Layer:
- *   `{"type":"heart_rate"|"ping","value":72|null,"unit":"bpm","timestamp":<epoch_ms>}`.
- *
- * Watch data flow:
- *   Watch app -> MessageClient -> [WatchListenerService] -> [WatchDataHolder]
- *   -> EventChannels -> Flutter WatchHealthBridge -> HealthRepository -> Dashboard UI
+ * Exposes two EventChannels and one MethodChannel for Flutter:
+ * - [METHOD_CHANNEL] (`com.vitalsync/health_bridge`): manual connect actions.
+ * - [CONNECTION_EVENT_CHANNEL] (`com.vitalsync/watch_connection`): watch state stream.
+ * - [DATA_EVENT_CHANNEL] (`com.vitalsync/watch_health_data`): live sensor JSON stream.
  */
-class MainActivity : FlutterActivity() {
+class MainActivity : FlutterActivity(), MessageClient.OnMessageReceivedListener {
+
     companion object {
+        private const val TAG = "MainActivityPhone"
         private const val METHOD_CHANNEL = "com.vitalsync/health_bridge"
         private const val CONNECTION_EVENT_CHANNEL = "com.vitalsync/watch_connection"
         private const val DATA_EVENT_CHANNEL = "com.vitalsync/watch_health_data"
+        private const val CONNECTION_PATH = "/vitalsync/connection"
+        private const val HEARTRATE_PATH = "/vitalsync/heartrate"
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        Wearable.getMessageClient(this).addListener(this)
+        checkConnectedWatchNodes()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        checkConnectedWatchNodes()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Wearable.getMessageClient(this).removeListener(this)
+    }
+
+    /**
+     * Proactively checks for connected Wear OS watch nodes via Google Play Services.
+     * If a paired watch node is connected, transitions state from "disconnected" to "connected".
+     */
+    private fun checkConnectedWatchNodes(onComplete: ((Boolean) -> Unit)? = null) {
+        Wearable.getNodeClient(this).connectedNodes
+            .addOnSuccessListener { nodes ->
+                Log.d(TAG, "Connected wearable nodes: ${nodes.size} -> ${nodes.map { it.displayName }}")
+                if (nodes.isNotEmpty()) {
+                    val currentState = WatchDataHolder.connectionState
+                    val newState = if (currentState == "measuring") "measuring" else "connected"
+                    WatchDataHolder.updateFromMessage(
+                        state = newState,
+                        bpm = WatchDataHolder.lastHeartRate,
+                        timestampMs = System.currentTimeMillis(),
+                        rawJson = WatchDataHolder.lastDataJson,
+                    )
+                    onComplete?.invoke(true)
+                } else {
+                    onComplete?.invoke(false)
+                }
+            }
+            .addOnFailureListener { e ->
+                Log.w(TAG, "Failed to query connected wearable nodes", e)
+                onComplete?.invoke(false)
+            }
+    }
+
+    override fun onMessageReceived(messageEvent: MessageEvent) {
+        when (messageEvent.path) {
+            CONNECTION_PATH -> {
+                val payload = String(messageEvent.data, Charsets.UTF_8)
+                Log.d(TAG, "Foreground connection message: $payload")
+                WatchDataHolder.updateFromMessage(
+                    state = if (payload == "connected") "connected" else "disconnected",
+                    bpm = null,
+                    timestampMs = System.currentTimeMillis(),
+                    rawJson = null,
+                )
+            }
+            HEARTRATE_PATH -> {
+                val rawJson = String(messageEvent.data, Charsets.UTF_8)
+                try {
+                    val json = JSONObject(rawJson)
+                    val type = json.optString("type", "ping")
+                    val value = if (!json.isNull("value")) {
+                        json.optInt("value")
+                    } else if (!json.isNull("bpm")) {
+                        json.optInt("bpm")
+                    } else {
+                        null
+                    }
+                    val timestamp = json.optLong("timestamp", System.currentTimeMillis())
+                    val state = if ((type == "heart_rate" || type == "reading") && value != null && value > 0) {
+                        "measuring"
+                    } else {
+                        "connected"
+                    }
+                    Log.d(TAG, "Foreground HR message: state=$state value=$value timestamp=$timestamp")
+                    WatchDataHolder.updateFromMessage(
+                        state = state,
+                        bpm = value,
+                        timestampMs = timestamp,
+                        rawJson = rawJson,
+                    )
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to parse foreground message", e)
+                    WatchDataHolder.updateFromMessage(
+                        state = "connected",
+                        bpm = null,
+                        timestampMs = System.currentTimeMillis(),
+                        rawJson = null,
+                    )
+                }
+            }
+        }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -35,11 +135,11 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, METHOD_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "connect" -> result.error(
-                        "UNAVAILABLE",
-                        "Manual connect request triggered. Live data streams automatically from Galaxy Watch app.",
-                        null,
-                    )
+                    "connect" -> {
+                        checkConnectedWatchNodes { isConnected ->
+                            result.success(isConnected)
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -51,6 +151,7 @@ class MainActivity : FlutterActivity() {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
                     listener = { state -> events.success(state) }
                     WatchDataHolder.addConnectionListener(listener!!)
+                    checkConnectedWatchNodes()
                 }
 
                 override fun onCancel(arguments: Any?) {
