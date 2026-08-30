@@ -111,6 +111,70 @@ void main() {
       expect(measurement.timestamp, ts);
     });
 
+    test('parses standardized steps JSON into HealthMeasurement', () async {
+      final ts = DateTime(2026, 8, 28, 10, 0, 0);
+      final jsonPayload = jsonEncode({
+        'type': 'steps',
+        'value': 3420,
+        'unit': 'steps',
+        'timestamp': ts.millisecondsSinceEpoch,
+      });
+
+      messenger.setMockStreamHandler(
+        dataChannel,
+        MockStreamHandler.inline(
+          onListen: (arguments, events) {
+            events.success(jsonPayload);
+          },
+        ),
+      );
+
+      final bridge = WatchHealthBridge(
+        connectionEventChannel: connectionChannel,
+        dataEventChannel: dataChannel,
+        methodChannel: methodChannel,
+      );
+
+      final measurement = await bridge.healthDataStream().first;
+      expect(measurement.type, HealthMetricType.steps);
+      expect(measurement.value, 3420.0);
+      expect(measurement.unit, 'steps');
+      expect(measurement.source, HealthDataSource.galaxyWatch);
+      expect(measurement.timestamp, ts);
+    });
+
+    test('parses standardized spo2 JSON into HealthMeasurement', () async {
+      final ts = DateTime(2026, 8, 28, 10, 0, 0);
+      final jsonPayload = jsonEncode({
+        'type': 'spo2',
+        'value': 98,
+        'unit': '%',
+        'timestamp': ts.millisecondsSinceEpoch,
+      });
+
+      messenger.setMockStreamHandler(
+        dataChannel,
+        MockStreamHandler.inline(
+          onListen: (arguments, events) {
+            events.success(jsonPayload);
+          },
+        ),
+      );
+
+      final bridge = WatchHealthBridge(
+        connectionEventChannel: connectionChannel,
+        dataEventChannel: dataChannel,
+        methodChannel: methodChannel,
+      );
+
+      final measurement = await bridge.healthDataStream().first;
+      expect(measurement.type, HealthMetricType.spo2);
+      expect(measurement.value, 98.0);
+      expect(measurement.unit, '%');
+      expect(measurement.source, HealthDataSource.galaxyWatch);
+      expect(measurement.timestamp, ts);
+    });
+
     test('parses legacy reading format with bpm field', () async {
       final ts = DateTime(2026, 8, 28, 10, 0, 0);
       final jsonPayload = jsonEncode({

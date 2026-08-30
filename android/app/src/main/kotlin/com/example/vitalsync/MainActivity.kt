@@ -33,6 +33,8 @@ class MainActivity : FlutterActivity(), MessageClient.OnMessageReceivedListener 
         private const val DATA_EVENT_CHANNEL = "com.vitalsync/watch_health_data"
         private const val CONNECTION_PATH = "/vitalsync/connection"
         private const val HEARTRATE_PATH = "/vitalsync/heartrate"
+        private const val STEPS_PATH = "/vitalsync/steps"
+        private const val SPO2_PATH = "/vitalsync/spo2"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -117,13 +119,49 @@ class MainActivity : FlutterActivity(), MessageClient.OnMessageReceivedListener 
                         rawJson = rawJson,
                     )
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to parse foreground message", e)
+                    Log.w(TAG, "Failed to parse foreground HR message", e)
                     WatchDataHolder.updateFromMessage(
                         state = "connected",
                         bpm = null,
                         timestampMs = System.currentTimeMillis(),
                         rawJson = null,
                     )
+                }
+            }
+            STEPS_PATH -> {
+                val rawJson = String(messageEvent.data, Charsets.UTF_8)
+                try {
+                    val json = JSONObject(rawJson)
+                    val value = if (!json.isNull("value")) json.optInt("value") else null
+                    val timestamp = json.optLong("timestamp", System.currentTimeMillis())
+                    val state = if (value != null && value >= 0) "measuring" else "connected"
+                    Log.d(TAG, "Foreground Steps message: state=$state value=$value timestamp=$timestamp")
+                    WatchDataHolder.updateFromMessage(
+                        state = state,
+                        steps = value,
+                        timestampMs = timestamp,
+                        rawJson = rawJson,
+                    )
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to parse foreground Steps message", e)
+                }
+            }
+            SPO2_PATH -> {
+                val rawJson = String(messageEvent.data, Charsets.UTF_8)
+                try {
+                    val json = JSONObject(rawJson)
+                    val value = if (!json.isNull("value")) json.optInt("value") else null
+                    val timestamp = json.optLong("timestamp", System.currentTimeMillis())
+                    val state = if (value != null && value > 0) "measuring" else "connected"
+                    Log.d(TAG, "Foreground SpO2 message: state=$state value=$value timestamp=$timestamp")
+                    WatchDataHolder.updateFromMessage(
+                        state = state,
+                        spo2 = value,
+                        timestampMs = timestamp,
+                        rawJson = rawJson,
+                    )
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to parse foreground SpO2 message", e)
                 }
             }
         }

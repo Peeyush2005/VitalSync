@@ -90,12 +90,34 @@ VitalSync/
 4. **Hardware Off-Body Detection**: Respects the physical on-wrist state; accurately shows `Place watch on wrist` when not in skin contact and streams live BPM when pulse is acquired.
 
 ### Standardized Message Protocol
-Biometric data is transmitted over the Google Play Services Wearable Data Layer (`/vitalsync/heartrate` and `/vitalsync/connection`) using a structured JSON payload:
+Biometric data is transmitted over the Google Play Services Wearable Data Layer (`/vitalsync/heartrate`, `/vitalsync/steps`, `/vitalsync/spo2`, and `/vitalsync/connection`) using structured JSON payloads:
+
+**Heart Rate (`/vitalsync/heartrate`)**:
 ```json
 {
   "type": "heart_rate",
   "value": 74,
   "unit": "bpm",
+  "timestamp": 1724835000000
+}
+```
+
+**Steps / Activity (`/vitalsync/steps`)**:
+```json
+{
+  "type": "steps",
+  "value": 3420,
+  "unit": "steps",
+  "timestamp": 1724835000000
+}
+```
+
+**Blood Oxygen (`/vitalsync/spo2`)**:
+```json
+{
+  "type": "spo2",
+  "value": 98,
+  "unit": "%",
   "timestamp": 1724835000000
 }
 ```
@@ -151,11 +173,11 @@ adb -s <watch-ip>:<watch-port> shell pm grant com.example.vitalsync android.perm
 
 | Test Suite | File Path | Scope | Status |
 |---|---|---|---|
-| **Unit Tests** | `test/data/watch_bridge/watch_health_bridge_test.dart` | Bridge JSON parsing, error resilience, heartbeat filtering | ✅ **PASS** |
-| **Repository Tests** | `test/data/repositories/samsung_health_repository_test.dart` | In-memory time series, zero synthetic backfill, bounding | ✅ **PASS** |
-| **Simulation Tests** | `test/data/repositories/fake_health_repository_test.dart` | Stable baseline generation, simulated range constraints | ✅ **PASS** |
-| **Widget Tests** | `test/widget_test.dart`, `dashboard_screen_test.dart` | Direct dashboard launch, reactive metrics cards, watch card | ✅ **PASS** |
-| **Hardware Verification** | Galaxy Watch4 (`SM_R870`) ↔ Galaxy S21 FE (`SM_G990B2`) | Real optical PPG heart rate streaming over Wear OS Data Layer | ✅ **VERIFIED** |
+| **Unit Tests** | `test/data/watch_bridge/watch_health_bridge_test.dart` | Bridge JSON parsing for HR, Steps, and SpO2, error resilience | ✅ **PASS** |
+| **Repository Tests** | `test/data/repositories/samsung_health_repository_test.dart` | In-memory time series (HR, Steps, SpO2), zero synthetic backfill | ✅ **PASS** |
+| **Simulation Tests** | `test/data/repositories/fake_health_repository_test.dart` | Stable baseline generation for HR, Steps, SpO2, range constraints | ✅ **PASS** |
+| **Widget Tests** | `test/widget_test.dart`, `dashboard_screen_test.dart` | Direct dashboard launch, reactive metrics cards (HR, Steps, SpO2) | ✅ **PASS** |
+| **Hardware Verification** | Galaxy Watch4 (`SM_R870`) ↔ Galaxy S21 FE (`SM_G990B2`) | Optical PPG heart rate, step counting, and on-demand SpO2 streaming | ✅ **VERIFIED** |
 
 ---
 

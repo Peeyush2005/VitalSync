@@ -4,7 +4,8 @@
 /// activity/step data before adding other sensors.
 enum HealthMetricType {
   heartRate,
-  steps;
+  steps,
+  spo2;
 
   /// A short, human-readable label for UI display.
   String get label {
@@ -13,6 +14,8 @@ enum HealthMetricType {
         return 'Heart rate';
       case HealthMetricType.steps:
         return 'Steps';
+      case HealthMetricType.spo2:
+        return 'Blood oxygen (SpO2)';
     }
   }
 
@@ -23,6 +26,8 @@ enum HealthMetricType {
         return 'bpm';
       case HealthMetricType.steps:
         return 'steps';
+      case HealthMetricType.spo2:
+        return '%';
     }
   }
 }

@@ -99,15 +99,29 @@ class WatchHealthBridge {
 
       final typeStr = data['type'] as String?;
       final dynamic rawValue = data['value'] ?? data['bpm'];
-      final unit = (data['unit'] as String?) ?? 'bpm';
       final timestampRaw = data['timestamp'];
 
-      // Skip heartbeat pings or null values
-      if (rawValue == null || rawValue is! num || rawValue <= 0) {
+      // Skip heartbeat pings or null/invalid values
+      if (rawValue == null || rawValue is! num) {
         return null;
       }
 
-      if (typeStr != 'heart_rate' && typeStr != 'reading') {
+      final HealthMetricType metricType;
+      final String unit;
+
+      if (typeStr == 'heart_rate' || typeStr == 'reading') {
+        if (rawValue <= 0) return null;
+        metricType = HealthMetricType.heartRate;
+        unit = (data['unit'] as String?) ?? 'bpm';
+      } else if (typeStr == 'steps' || typeStr == 'step_count') {
+        if (rawValue < 0) return null;
+        metricType = HealthMetricType.steps;
+        unit = (data['unit'] as String?) ?? 'steps';
+      } else if (typeStr == 'spo2' || typeStr == 'blood_oxygen') {
+        if (rawValue <= 0 || rawValue > 100) return null;
+        metricType = HealthMetricType.spo2;
+        unit = (data['unit'] as String?) ?? '%';
+      } else {
         return null;
       }
 
@@ -117,9 +131,9 @@ class WatchHealthBridge {
               : DateTime.now();
 
       return HealthMeasurement(
-        id: 'galaxy_watch_${timestamp.millisecondsSinceEpoch}',
+        id: 'galaxy_watch_${metricType.name}_${timestamp.millisecondsSinceEpoch}',
         userId: 'local_user',
-        type: HealthMetricType.heartRate,
+        type: metricType,
         value: rawValue.toDouble(),
         unit: unit,
         timestamp: timestamp,

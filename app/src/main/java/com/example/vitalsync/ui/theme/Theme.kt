@@ -7,24 +7,22 @@ import androidx.wear.compose.material.MaterialTheme
 /**
  * Wear Compose theme for VitalSync watch app.
  *
- * Uses [androidx.wear.compose.material.MaterialTheme] (not phone Material3)
- * so all components (Chip, ScalingLazyColumn, etc.) render correctly on
- * round and small Wear OS displays.
+ * Uses [androidx.wear.compose.material.MaterialTheme] optimized for round AMOLED displays.
  */
 private val VitalSyncWearColors = Colors(
     primary = VitalTeal,
     primaryVariant = VitalTealDark,
-    secondary = VitalGreen,
+    secondary = StepEmerald,
     secondaryVariant = VitalTealLight,
-    error = VitalRed,
-    onPrimary = VitalWhite,
-    onSecondary = VitalBlack,
-    onError = VitalBlack,
-    background = VitalBlack,
-    onBackground = VitalWhite,
-    surface = VitalDarkSurface,
-    onSurface = VitalWhite,
-    onSurfaceVariant = VitalGrey,
+    error = PulseCrimson,
+    onPrimary = OledBlack,
+    onSecondary = OledBlack,
+    onError = OledBlack,
+    background = OledBlack,
+    onBackground = TextPrimary,
+    surface = SurfaceDark,
+    onSurface = TextPrimary,
+    onSurfaceVariant = TextSecondary,
 )
 
 @Composable

@@ -9,22 +9,34 @@ class DemoDataBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: colorScheme.secondaryContainer,
-        borderRadius: BorderRadius.circular(12),
+        color: const Color(0xFFF59E0B).withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: const Color(0xFFF59E0B).withValues(alpha: 0.3),
+          width: 1,
+        ),
       ),
       child: Row(
         children: [
-          Icon(Icons.info_outline, size: 18, color: colorScheme.onSecondaryContainer),
-          const SizedBox(width: 8),
+          const Icon(
+            Icons.info_outline,
+            size: 18,
+            color: Color(0xFFF59E0B),
+          ),
+          const SizedBox(width: 10),
           Expanded(
             child: Text(
               'Showing simulated demo data. Connect a Galaxy Watch for real measurements.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: colorScheme.onSecondaryContainer,
+                color: colorScheme.onSurface,
+                fontWeight: FontWeight.w500,
+                fontSize: 12,
+                height: 1.3,
               ),
             ),
           ),

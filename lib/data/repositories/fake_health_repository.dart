@@ -18,6 +18,7 @@ class FakeHealthRepository implements HealthRepository {
     _history = {
       HealthMetricType.heartRate: _generateHeartRateHistory(),
       HealthMetricType.steps: _generateStepsHistory(),
+      HealthMetricType.spo2: _generateSpO2History(),
     };
   }
 
@@ -117,6 +118,33 @@ class FakeHealthRepository implements HealthRepository {
               : ActivityState.resting,
           qualityScore: 0.9 + _random.nextDouble() * 0.1,
           confidence: 0.85 + _random.nextDouble() * 0.15,
+        ),
+      );
+    }
+    return samples; // already newest-first
+  }
+
+  List<HealthMeasurement> _generateSpO2History() {
+    final now = DateTime.now();
+    const sampleCount = 8; // spot checks every few hours
+    final samples = <HealthMeasurement>[];
+
+    for (var i = 0; i < sampleCount; i++) {
+      final timestamp = now.subtract(Duration(hours: 3 * i));
+      // Plausible resting SpO2: 96% - 99%
+      final spo2Value = 96.0 + _random.nextInt(4);
+
+      samples.add(
+        HealthMeasurement(
+          id: 'spo2-$i',
+          userId: _userId,
+          type: HealthMetricType.spo2,
+          value: spo2Value,
+          unit: HealthMetricType.spo2.defaultUnit,
+          timestamp: timestamp,
+          source: HealthDataSource.simulated,
+          qualityScore: 0.92 + _random.nextDouble() * 0.08,
+          confidence: 0.9 + _random.nextDouble() * 0.1,
         ),
       );
     }

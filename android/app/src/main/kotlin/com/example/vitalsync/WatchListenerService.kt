@@ -27,6 +27,8 @@ class WatchListenerService : WearableListenerService() {
         private const val TAG = "WatchListenerService"
         private const val CONNECTION_PATH = "/vitalsync/connection"
         private const val HEARTRATE_PATH = "/vitalsync/heartrate"
+        private const val STEPS_PATH = "/vitalsync/steps"
+        private const val SPO2_PATH = "/vitalsync/spo2"
     }
 
     override fun onMessageReceived(messageEvent: MessageEvent) {
@@ -35,6 +37,8 @@ class WatchListenerService : WearableListenerService() {
         when (messageEvent.path) {
             CONNECTION_PATH -> handleConnectionMessage(messageEvent)
             HEARTRATE_PATH -> handleHeartRateMessage(messageEvent)
+            STEPS_PATH -> handleStepsMessage(messageEvent)
+            SPO2_PATH -> handleSpO2Message(messageEvent)
             else -> Log.d(TAG, "Ignoring unknown path: ${messageEvent.path}")
         }
     }
@@ -86,6 +90,48 @@ class WatchListenerService : WearableListenerService() {
                 timestampMs = System.currentTimeMillis(),
                 rawJson = null,
             )
+        }
+    }
+
+    private fun handleStepsMessage(event: MessageEvent) {
+        val rawJson = String(event.data, Charsets.UTF_8)
+        try {
+            val json = JSONObject(rawJson)
+            val value = if (!json.isNull("value")) json.optInt("value") else null
+            val timestamp = json.optLong("timestamp", System.currentTimeMillis())
+            Log.d(TAG, "Steps message: value=$value timestamp=$timestamp")
+
+            val state = if (value != null && value >= 0) "measuring" else "connected"
+
+            WatchDataHolder.updateFromMessage(
+                state = state,
+                steps = value,
+                timestampMs = timestamp,
+                rawJson = rawJson,
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse steps message", e)
+        }
+    }
+
+    private fun handleSpO2Message(event: MessageEvent) {
+        val rawJson = String(event.data, Charsets.UTF_8)
+        try {
+            val json = JSONObject(rawJson)
+            val value = if (!json.isNull("value")) json.optInt("value") else null
+            val timestamp = json.optLong("timestamp", System.currentTimeMillis())
+            Log.d(TAG, "SpO2 message: value=$value timestamp=$timestamp")
+
+            val state = if (value != null && value > 0) "measuring" else "connected"
+
+            WatchDataHolder.updateFromMessage(
+                state = state,
+                spo2 = value,
+                timestampMs = timestamp,
+                rawJson = rawJson,
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse SpO2 message", e)
         }
     }
 }

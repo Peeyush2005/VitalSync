@@ -34,6 +34,13 @@ void main() {
     expect(find.textContaining('simulated demo data'), findsOneWidget);
     expect(find.text('Heart rate'), findsOneWidget);
     expect(find.textContaining('bpm'), findsOneWidget);
+
+    // Scroll to ensure SpO2 card is built in standard test viewport
+    await tester.drag(find.byType(ListView), const Offset(0, -300));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Blood oxygen (SpO2)'), findsOneWidget);
+    expect(find.textContaining('%'), findsWidgets);
   });
 }
 

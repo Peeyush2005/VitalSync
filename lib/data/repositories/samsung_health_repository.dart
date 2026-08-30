@@ -35,6 +35,7 @@ class SamsungHealthRepository implements HealthRepository {
   final Map<HealthMetricType, List<HealthMeasurement>> _history = {
     HealthMetricType.heartRate: [],
     HealthMetricType.steps: [],
+    HealthMetricType.spo2: [],
   };
 
   void _onMeasurementReceived(HealthMeasurement measurement) {

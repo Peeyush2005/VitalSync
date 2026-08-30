@@ -69,4 +69,16 @@ void main() {
       expect(measurement.value, greaterThanOrEqualTo(0));
     }
   });
+
+  test('spo2 history has plausible percentage values in range 90-100%', () async {
+    final history = await repository.getMeasurementHistory(
+      HealthMetricType.spo2,
+    );
+
+    expect(history, isNotEmpty);
+    for (final measurement in history) {
+      expect(measurement.value, inInclusiveRange(90, 100));
+      expect(measurement.unit, '%');
+    }
+  });
 }

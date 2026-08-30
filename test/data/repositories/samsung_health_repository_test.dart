@@ -59,6 +59,72 @@ void main() {
       await controller.close();
     });
 
+    test('stores and returns step measurements independently from heart rate', () async {
+      final controller = StreamController<HealthMeasurement>();
+      final repo = SamsungHealthRepository(dataStream: controller.stream);
+
+      final hr = HealthMeasurement(
+        id: 'hr_1',
+        userId: 'u1',
+        type: HealthMetricType.heartRate,
+        value: 75,
+        unit: 'bpm',
+        timestamp: DateTime(2026, 8, 28, 10, 0, 0),
+        source: HealthDataSource.galaxyWatch,
+      );
+
+      final step = HealthMeasurement(
+        id: 'step_1',
+        userId: 'u1',
+        type: HealthMetricType.steps,
+        value: 1250,
+        unit: 'steps',
+        timestamp: DateTime(2026, 8, 28, 10, 0, 5),
+        source: HealthDataSource.galaxyWatch,
+      );
+
+      controller.add(hr);
+      controller.add(step);
+
+      await Future<void>.delayed(Duration.zero);
+
+      final latestHr = await repo.getLatestMeasurement(HealthMetricType.heartRate);
+      final latestSteps = await repo.getLatestMeasurement(HealthMetricType.steps);
+
+      expect(latestHr?.value, 75.0);
+      expect(latestHr?.unit, 'bpm');
+      expect(latestSteps?.value, 1250.0);
+      expect(latestSteps?.unit, 'steps');
+
+      repo.dispose();
+      await controller.close();
+    });
+
+    test('stores and returns SpO2 spot measurements independently', () async {
+      final controller = StreamController<HealthMeasurement>();
+      final repo = SamsungHealthRepository(dataStream: controller.stream);
+
+      final spo2 = HealthMeasurement(
+        id: 'spo2_1',
+        userId: 'u1',
+        type: HealthMetricType.spo2,
+        value: 99,
+        unit: '%',
+        timestamp: DateTime(2026, 8, 28, 10, 0, 10),
+        source: HealthDataSource.galaxyWatch,
+      );
+
+      controller.add(spo2);
+      await Future<void>.delayed(Duration.zero);
+
+      final latestSpO2 = await repo.getLatestMeasurement(HealthMetricType.spo2);
+      expect(latestSpO2?.value, 99.0);
+      expect(latestSpO2?.unit, '%');
+
+      repo.dispose();
+      await controller.close();
+    });
+
     test('history honors limit and maxHistorySize bounding', () async {
       final repo = SamsungHealthRepository(maxHistorySize: 5);
 

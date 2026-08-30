@@ -28,6 +28,14 @@ object WatchDataHolder {
         private set
 
     @Volatile
+    var lastSteps: Int? = null
+        private set
+
+    @Volatile
+    var lastSpO2: Int? = null
+        private set
+
+    @Volatile
     var lastUpdateTimestampMs: Long = 0L
         private set
 
@@ -67,17 +75,27 @@ object WatchDataHolder {
     }
 
     /**
-     * Called by [WatchListenerService] when a message arrives from the watch.
+     * Called by [WatchListenerService] or [MainActivity] when a message arrives from the watch.
      *
      * @param state        One of "connected", "measuring", "disconnected".
-     * @param bpm          Heart rate in beats-per-minute, or null for pings.
+     * @param bpm          Heart rate in beats-per-minute, or null.
+     * @param steps        Cumulative step count, or null.
      * @param timestampMs  Timestamp of the reading in epoch milliseconds.
      * @param rawJson      The full JSON string payload to push to Flutter.
      */
-    fun updateFromMessage(state: String, bpm: Int?, timestampMs: Long, rawJson: String? = null) {
+    fun updateFromMessage(
+        state: String,
+        bpm: Int? = null,
+        steps: Int? = null,
+        spo2: Int? = null,
+        timestampMs: Long,
+        rawJson: String? = null,
+    ) {
         mainHandler.post {
             connectionState = state
-            lastHeartRate = bpm
+            if (bpm != null) lastHeartRate = bpm
+            if (steps != null) lastSteps = steps
+            if (spo2 != null) lastSpO2 = spo2
             lastUpdateTimestampMs = timestampMs
             if (rawJson != null) {
                 lastDataJson = rawJson
@@ -106,6 +124,8 @@ object WatchDataHolder {
     private fun degradeToDisconnected() {
         connectionState = "disconnected"
         lastHeartRate = null
+        lastSteps = null
+        lastSpO2 = null
         lastDataJson = null
         notifyConnectionListeners()
     }
