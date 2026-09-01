@@ -138,8 +138,6 @@ class WatchHealthBridge {
         unit: unit,
         timestamp: timestamp,
         source: HealthDataSource.galaxyWatch,
-        qualityScore: 1.0,
-        confidence: 1.0,
       );
     } catch (_) {
       // Malformed JSON or corrupted fields gracefully ignored

@@ -12,48 +12,61 @@
 | **M5** | Hardened Native Android Bridge & Dual-Engine Failover | ✅ **COMPLETE** | `NodeClient` proactive checks, `MessageClient`, Wear OS `SensorManager`. |
 | **M6** | Real-Time Hardware Sensor Streaming & Zero Synthetic Backfill | ✅ **COMPLETE** | Tested and verified live on **Galaxy Watch4 + Galaxy S21 FE**. |
 | **M7 (Deferred)**| Firebase & Cloud Sync | ⏸️ **DEFERRED** | Deferred per decision to prioritize local watch features. |
-| **Sensor Expansion** | Steps/Activity (`Sensor.TYPE_STEP_COUNTER`) + SpO2 (`HealthTrackerType.SPO2_ON_DEMAND`) | ✅ **COMPLETE** | Multi-path Wear OS Data Layer (`/steps`, `/spo2`), reactive Flutter streams, 32/32 tests. |
+| **Sensor Expansion** | Steps/Activity (`Sensor.TYPE_STEP_COUNTER`) + SpO2 (`HealthTrackerType.SPO2_ON_DEMAND`) | ✅ **COMPLETE** | Multi-path Wear OS Data Layer (`/steps`, `/spo2`), reactive Flutter streams. |
 | **UI Modernization & Performance** | Wear OS 60fps lag fix, AMOLED styling, Flutter design system overhaul | ✅ **COMPLETE** | 1Hz IPC rate-limiting, node caching, pulsing hero pulse card, squircle metric cards. |
+| **M8** | Per-Metric Data Quality Engine (HR, Steps, SpO2) | ✅ **COMPLETE** | Signal variance, sampling cadence, delta jumps, repeat spot consistency, real quality/confidence pills. |
+| **M9** | Real-Time Activity Context Classification | ✅ **COMPLETE** | Resting/Walking/Active/Exercising/Unknown fusion from cadence + HR elevation gated by M8 confidence. |
+| **M10** | Local SQLite Persistence & Personal Baseline Engine | ✅ **COMPLETE** | Async `sqflite` persistence, zero UI blocking, personalized expected bounds (median ± 1.5σ), quality gating. |
+| **M11** | Biometric Trend Engine & Insights Intelligence | ✅ **COMPLETE** | Multi-day windowing (7d HR/steps, 14d SpO2), rolling stddev, Z-score, slope, repeated deviation, plain-language insights. |
+| **M12** | Anomaly Detection Engine & Context-Aware Surfacing | ✅ **COMPLETE** | Pure combination layer, structural M8 quality gate, M10 deviation ratio math, M9 activity suppression, M11 trend escalation, ongoing anomaly deduplication. |
 
 ---
 
 ## Key Technical Milestones Accomplished
 
-### 1. Dual-Engine Physical PPG Sensor Engine & Expanded Sensors (Wear OS)
-- Integrated **Samsung Health Sensor SDK (v1.4.1 AAR)** (`HealthTrackingService` & `HealthTracker`) for raw continuous heart rate and on-demand SpO2 spot checks.
-- Implemented **Android Wear OS Platform Failover** (`SensorManager.getDefaultSensor(Sensor.TYPE_HEART_RATE)`) with `SENSOR_DELAY_UI`.
-- Added hardware **Step Counter** (`Sensor.TYPE_STEP_COUNTER`) and **Step Detector** (`Sensor.TYPE_STEP_DETECTOR`) tracking.
-- Resolved Wear OS 4+ (One UI Watch 5/6) permission security restrictions by declaring `android.permission.health.READ_HEART_RATE`, `android.permission.BODY_SENSORS_BACKGROUND`, and `android.permission.ACTIVITY_RECOGNITION`.
+### 1. Anomaly Detection Engine (M12)
+- **Pure Combination & Decision Layer**: Implemented in `lib/analytics/anomaly_engine.dart`. Re-derives no stats independently; purely combines M8 quality, M9 activity context, M10 personal baseline, and M11 multi-day trend inputs.
+- **Structural Quality Precondition (Gate 1, First, Always)**: Evaluates M8 data quality at the very top before any deviation math exists in scope. Readings with quality < 0.60 return `AnomalyResult.gated` with confidence 0.0 — zero low-quality readings can ever be flagged as anomalies.
+- **M10 Personal Baseline & Recency Gating (Gate 2)**: Requires established baseline with expected range bounds (`minExpected`, `maxExpected`) and fresh measurements (≤ 10 minutes old).
+- **M9 Activity Context Suppression (Gate 3)**: High-side heart rate elevation during `Exercising`, `Active`, or `Walking` is classified as expected physiological response and suppressed. Low-side deviations (e.g. bradycardia crash) are never suppressed by activity.
+- **Cumulative Steps Disambiguation**: Point comparisons against daily baseline ranges are skipped for cumulative step counts. Step anomalies surface exclusively via M11 confirmed trend patterns.
+- **Documented Severity Scale**: Expressed in units of the expected range's half-width:
+  - `mild`: Deviation ratio ≤ 0.25 beyond expected range bounds.
+  - `moderate`: Deviation ratio 0.25 to 0.75 beyond expected bounds.
+  - `severe`: Deviation ratio > 0.75 beyond expected bounds.
+- **M11 Trend Corroboration & Escalation**: Confirmed acute/repeated patterns (`suddenShift`, `repeatedDeviation` with confidence ≥ 0.50) escalate severity by one level and surface pattern anomalies even when a single reading is within range.
+- **Ongoing vs. New Anomaly Deduplication**: Tracks stable `anomalyKey` (`<metric>:<high|low>[:pattern]`) with a 6-hour continuity window. Sustained deviations set `isOngoing = true` and carry `firstDetectedAt` forward to prevent alert fatigue.
+- **Non-Diagnostic UI Notice Banners**: `MetricSummaryCard` displays non-diagnostic notices ("unusual pattern", "worth monitoring", "outside your usual range") with severity color accenting and `Ongoing` status chips.
 
-### 2. Wear OS 60fps Performance Optimization & Lag Elimination
-- **Eliminated Recomposition Storm**: Bounded UI state dispatch to at most once per 500ms (or on significant delta), preventing 50–100Hz Compose recomposition churn on Exynos W920.
-- **1 Hz Data Layer Transmission**: Bounded Bluetooth Data Layer message dispatches to 1 message/sec max per sensor, eliminating IPC queue flooding.
-- **Node Caching**: Implemented thread-safe caching of connected node IDs with a 10s TTL, eliminating continuous `NodeClient.connectedNodes` IPC calls during active streaming.
-- **Optimized Sensor Delay**: Switched from `SENSOR_DELAY_FASTEST` to `SensorManager.SENSOR_DELAY_UI` (~60ms), reducing CPU interrupt overhead by ~80%.
+### 2. Biometric Trend Engine (M11)
+- **Mathematical Multi-Day Trend Models**: Implemented in `lib/analytics/trend_engine.dart` with tailored physiological windowing:
+  - *Heart Rate*: 7-day lookback window aggregated into daily resting medians.
+  - *Steps*: 7-day lookback window aggregated into daily cumulative step totals.
+  - *SpO2*: 14-day lookback window evaluating sparse on-demand spot checks chronologically.
+- **Statistical Measures**: Computes Moving Average, Rolling Standard Deviation, Z-Score relative to M10 baseline, Percent Deviation, and Linear Regression Slope (units/day).
+- **Trend Classifications**:
+  - `stable`: Recent readings within expected baseline bounds.
+  - `increasing` / `decreasing`: Statistically elevated or lowered trend (|Z| ≥ 1.25, slope trend).
+  - `suddenShift`: Acute sustained elevation or drop (|Z| ≥ 2.2).
+  - `repeatedDeviation`: Alternating upper/lower bound violations outside expected baseline range.
+  - `insufficientData`: Clean gating requiring minimum days/samples and established M10 baselines ("not enough data yet" pattern).
+- **Data Quality Gating**: Excludes low M8 quality (<0.60) readings and scales trend confidence by the valid sample ratio.
+- **UI & Repository Integration**: Powered by `trendHistoryProvider` querying SQLite time ranges and `InsightsScreen` displaying status badges, plain non-diagnostic headlines, and baseline references.
 
-### 3. Native Bridge & Reliable Multi-Metric Protocol
-- Standardized distinct message endpoints over Google Play Services Wearable Data Layer:
-  - `/vitalsync/connection` (Connection state)
-  - `/vitalsync/heartrate` (PPG live heart rate)
-  - `/vitalsync/steps` (Cumulative steps)
-  - `/vitalsync/spo2` (Spot blood oxygen saturation)
-- `WatchDataHolder` singleton manages thread-safe state, `lastHeartRate`, `lastSteps`, `lastSpO2`, and 30-second automatic staleness degradation.
-- Foreground `MessageClient.OnMessageReceivedListener` + background `WatchListenerService` dual delivery.
+### 2. Local Persistence & Personal Baseline Engine (M10)
+- **Local Persistence (`HealthDatabase`)**: SQLite persistence via `sqflite` with composite indexes (`idx_measurements_type_timestamp`, `idx_measurements_type_activity_timestamp`) and non-blocking asynchronous writes.
+- **Personal Baseline Engine (`PersonalBaselineEngine`)**: Computes central tendency baseline, standard deviation, and normal expected physiological ranges (median ± 1.5σ) per metric.
+- **Strict Gating**: Requires minimum sample counts (≥5 resting HR, ≥3 step days, ≥3 SpO2) and filters low M8 quality (<0.60) readings before establishing a baseline.
 
-### 4. UI Modernization & Health Design System
-- **Wear OS AMOLED Revamp**:
-  - True `#000000` black background for OLED battery efficiency and infinite contrast.
-  - Animated pulsing heart icon with `rememberInfiniteTransition` when active.
-  - Large bold 32sp BPM readout + styled status badges.
-  - Quick metric pills for Steps (`🚶`) and SpO2 (`🫁`).
-  - Elevated action chips for live tracking, SpO2 spot checks, permissions, and phone sync.
-- **Flutter Companion App Design System**:
-  - Deep Obsidian dark mode (`#0B0F17`) and Crisp Health Slate light mode (`#F8FAFC`).
-  - Custom `CardThemeData` with 18dp rounded corners and subtle border outlines.
-  - Semantic metric palettes: Crimson Rose (HR), Emerald Mint (Steps), Sky Cyan (SpO2), Lavender Purple (Insights).
-  - `MetricSummaryCard`: 12dp squircle icons, bold hero values, micro visual baseline gauge, quality/confidence pills.
-  - `WatchStatusCard`: Connectivity banner with glowing pulse dot and live recency (`● Connected • Updated 2s ago`).
-  - All tabs (Dashboard, Metrics, Insights, History, Profile) upgraded with cohesive visual styling.
+### 3. Data Quality Engine (M8) & Activity Context Classification (M9)
+- **Per-Metric Mathematical Quality Assessment**: Factors physiological sanity bounds, delta jumps, rolling variance, and sampling cadence into 0.0–1.0 quality scores.
+- **Multi-Sensor Activity Fusion**: Fuses real-time step cadence, heart rate elevation, and quality scores to classify user states (`Resting`, `Walking`, `Active`, `Exercising`, `Unknown`).
+- **Dashboard UI Cards**: `MetricSummaryCard` displays live quality pills; `ActivityContextCard` renders real-time state and cadence.
+
+### 4. Dual-Engine Physical PPG Sensor Engine & Wear OS Modernization
+- **Samsung Health Sensor SDK (v1.4.1 AAR)** + Android Wear OS Platform Failover (`SensorManager`).
+- **Eliminated Recomposition Storm**: Bounded UI state dispatch to ≤ 1 update / 500ms and Bluetooth Data Layer transmissions to 1 Hz.
+- **AMOLED Dark Theme**: `#000000` AMOLED styling with pulsing pulse indicators on Wear OS.
 
 ---
 
@@ -74,7 +87,7 @@
 ## Test Suite & Quality Status
 
 - `flutter analyze`: **0 issues found** (Clean static analysis).
-- `flutter test`: **32 / 32 unit & widget tests passed** (100% pass rate).
+- `flutter test`: **104 / 104 unit & widget tests passed** (100% pass rate).
 - Watch APK: `./gradlew :app:assembleDebug` → **BUILD SUCCESSFUL**.
 - Mobile APK: `flutter build apk --debug` & `flutter build apk --release` → **BUILD SUCCESSFUL**.
 - GitHub Repository: `https://github.com/Peeyush2005/VitalSync.git` on branch `main`.

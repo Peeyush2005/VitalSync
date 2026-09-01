@@ -31,9 +31,10 @@ void main() {
 
     expect(find.text('Galaxy Watch'), findsOneWidget);
     expect(find.text('Not connected'), findsOneWidget);
+    expect(find.text('Activity Context'), findsOneWidget);
     expect(find.textContaining('simulated demo data'), findsOneWidget);
     expect(find.text('Heart rate'), findsOneWidget);
-    expect(find.textContaining('bpm'), findsOneWidget);
+    expect(find.textContaining('bpm'), findsWidgets);
 
     // Scroll to ensure SpO2 card is built in standard test viewport
     await tester.drag(find.byType(ListView), const Offset(0, -300));
