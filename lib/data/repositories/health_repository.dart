@@ -1,3 +1,4 @@
+import '../models/activity_state.dart';
 import '../models/health_measurement.dart';
 import '../models/health_metric_type.dart';
 
@@ -5,7 +6,8 @@ import '../models/health_metric_type.dart';
 ///
 /// Implementations: [FakeHealthRepository] (demo data, used before hardware
 /// integration) and [SamsungHealthRepository] (backed by real Galaxy Watch /
-/// Samsung Health Sensor SDK). UI code depends only on this interface.
+/// Samsung Health Sensor SDK + local SQLite persistence). UI & analytics code
+/// depend only on this interface.
 abstract class HealthRepository {
   /// The most recent measurement of [type] for the current user, or null
   /// if none is available yet.
@@ -18,6 +20,17 @@ abstract class HealthRepository {
     int limit = 50,
   });
 
+  /// Queries historical measurements of [type] matching time bounds and optional
+  /// [activityState] or [minQualityScore], newest first.
+  Future<List<HealthMeasurement>> getMeasurementsInRange(
+    HealthMetricType type, {
+    DateTime? startTime,
+    DateTime? endTime,
+    ActivityState? activityState,
+    double? minQualityScore,
+    int? limit,
+  });
+
   /// Live reactive stream of the latest measurement of [type].
   Stream<HealthMeasurement?> watchLatestMeasurement(HealthMetricType type);
 
@@ -27,3 +40,4 @@ abstract class HealthRepository {
     int limit = 50,
   });
 }
+

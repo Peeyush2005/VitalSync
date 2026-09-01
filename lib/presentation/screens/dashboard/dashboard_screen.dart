@@ -6,6 +6,7 @@ import '../../../data/models/health_metric_type.dart';
 import '../../../data/models/watch_connection_state.dart';
 import '../../providers/health_providers.dart';
 import '../../providers/watch_connection_provider.dart';
+import '../../widgets/activity_context_card.dart';
 import '../../widgets/demo_data_banner.dart';
 import '../../widgets/empty_state_card.dart';
 import '../../widgets/metric_summary_card.dart';
@@ -29,6 +30,13 @@ class DashboardScreen extends ConsumerWidget {
     final spo2 = ref.watch(
       latestMeasurementProvider(HealthMetricType.spo2),
     );
+    final hrBaseline = ref.watch(personalBaselineProvider(HealthMetricType.heartRate));
+    final stepsBaseline = ref.watch(personalBaselineProvider(HealthMetricType.steps));
+    final spo2Baseline = ref.watch(personalBaselineProvider(HealthMetricType.spo2));
+    final hrAnomaly = ref.watch(anomalyProvider(HealthMetricType.heartRate));
+    final stepsAnomaly = ref.watch(anomalyProvider(HealthMetricType.steps));
+    final spo2Anomaly = ref.watch(anomalyProvider(HealthMetricType.spo2));
+    final activityResult = ref.watch(activityClassificationProvider);
     final watchConnection = ref.watch(watchConnectionProvider);
     final connectionState =
         watchConnection.value ?? WatchConnectionState.disconnected;
@@ -54,13 +62,17 @@ class DashboardScreen extends ConsumerWidget {
           WatchStatusCard(state: connectionState),
           const SizedBox(height: 12),
 
-          // 2. Demo Banner when disconnected
+          // 2. Real-time Activity Context Classification
+          ActivityContextCard(result: activityResult),
+          const SizedBox(height: 12),
+
+          // 3. Demo Banner when disconnected
           if (!connectionState.isActive) ...[
             const DemoDataBanner(),
             const SizedBox(height: 12),
           ],
 
-          // 3. Section Header
+          // 4. Section Header
           Padding(
             padding: const EdgeInsets.only(left: 4, bottom: 8, top: 4),
             child: Row(
@@ -77,7 +89,7 @@ class DashboardScreen extends ConsumerWidget {
             ),
           ),
 
-          // 4. Heart Rate Card
+          // 5. Heart Rate Card
           heartRate.when(
             data: (measurement) => measurement == null
                 ? const EmptyStateCard(
@@ -90,6 +102,8 @@ class DashboardScreen extends ConsumerWidget {
                     icon: Icons.favorite_outline,
                     title: 'Heart rate',
                     measurement: measurement,
+                    baseline: hrBaseline,
+                    anomaly: hrAnomaly.value,
                   ),
             loading: () => const _LoadingCard(
               title: 'Heart rate',
@@ -103,7 +117,7 @@ class DashboardScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 12),
 
-          // 5. Steps / Activity Card
+          // 6. Steps / Activity Card
           steps.when(
             data: (measurement) => measurement == null
                 ? const EmptyStateCard(
@@ -115,6 +129,8 @@ class DashboardScreen extends ConsumerWidget {
                     icon: Icons.directions_walk,
                     title: 'Activity',
                     measurement: measurement,
+                    baseline: stepsBaseline,
+                    anomaly: stepsAnomaly.value,
                   ),
             loading: () => const _LoadingCard(
               title: 'Activity',
@@ -128,7 +144,7 @@ class DashboardScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 12),
 
-          // 6. Blood Oxygen (SpO2) Card
+          // 7. Blood Oxygen (SpO2) Card
           spo2.when(
             data: (measurement) => measurement == null
                 ? const EmptyStateCard(
@@ -141,6 +157,8 @@ class DashboardScreen extends ConsumerWidget {
                     icon: Icons.water_drop_outlined,
                     title: 'Blood oxygen (SpO2)',
                     measurement: measurement,
+                    baseline: spo2Baseline,
+                    anomaly: spo2Anomaly.value,
                   ),
             loading: () => const _LoadingCard(
               title: 'Blood oxygen',

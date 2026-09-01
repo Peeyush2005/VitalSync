@@ -8,9 +8,13 @@ import 'health_repository.dart';
 
 /// In-memory fake implementation of [HealthRepository].
 ///
-/// Generates plausible-looking (but clearly labeled as simulated) history
-/// once per instance, so repeated reads are stable within a session. This
-/// exists purely to unblock UI/analytics development before real Galaxy
+/// Generates plausible-looking (but clearly labeled as simulated) multi-day
+/// history once per instance, so repeated reads are stable within a session:
+/// - Heart Rate: ~7 days of periodic resting & active readings (every ~30-60 min).
+/// - Steps: ~7 days of hourly buckets modeling daily activity cycles.
+/// - SpO2: ~14 days of sparse spot checks (1-3 per day).
+///
+/// This exists purely to unblock UI/analytics development before real Galaxy
 /// Watch / Samsung Health integration lands (Milestones 4-6).
 class FakeHealthRepository implements HealthRepository {
   FakeHealthRepository({this._userId = 'demo-user', Random? random})
@@ -44,6 +48,30 @@ class FakeHealthRepository implements HealthRepository {
   }
 
   @override
+  Future<List<HealthMeasurement>> getMeasurementsInRange(
+    HealthMetricType type, {
+    DateTime? startTime,
+    DateTime? endTime,
+    ActivityState? activityState,
+    double? minQualityScore,
+    int? limit,
+  }) async {
+    final history = _history[type] ?? const [];
+    var filtered = history.where((m) {
+      if (startTime != null && m.timestamp.isBefore(startTime)) return false;
+      if (endTime != null && m.timestamp.isAfter(endTime)) return false;
+      if (activityState != null && m.activityState != activityState) return false;
+      if (minQualityScore != null && (m.qualityScore ?? 1.0) < minQualityScore) return false;
+      return true;
+    });
+
+    if (limit != null) {
+      filtered = filtered.take(limit);
+    }
+    return filtered.toList(growable: false);
+  }
+
+  @override
   Stream<HealthMeasurement?> watchLatestMeasurement(HealthMetricType type) {
     return Stream.fromFuture(getLatestMeasurement(type));
   }
@@ -58,21 +86,28 @@ class FakeHealthRepository implements HealthRepository {
 
   List<HealthMeasurement> _generateHeartRateHistory() {
     final now = DateTime.now();
-    const sampleCount = 48; // every 30 minutes over the past 24 hours
-    var current = 68.0; // resting baseline bpm
+    // 7 days of data at ~1-2 readings per hour = ~200 samples
+    const sampleCount = 168; // 7 days * 24 hours
+    var restingBase = 68.0;
     final samples = <HealthMeasurement>[];
 
     for (var i = 0; i < sampleCount; i++) {
-      final timestamp = now.subtract(Duration(minutes: 30 * i));
-      // Small random walk plus an occasional activity spike.
-      final isActive = _random.nextDouble() < 0.15;
+      final timestamp = now.subtract(Duration(hours: i));
+      final hourOfDay = timestamp.hour;
+
+      // Realistic circadian drift + day-to-day mild fluctuation
+      final isNight = hourOfDay < 6 || hourOfDay > 23;
+      final isActive = !isNight && _random.nextDouble() < 0.20;
       final activityState = isActive
-          ? (_random.nextBool() ? ActivityState.walking : ActivityState.running)
+          ? (_random.nextBool() ? ActivityState.walking : ActivityState.exercising)
           : ActivityState.resting;
-      final drift = (_random.nextDouble() - 0.5) * 6;
-      final activityBoost = isActive ? 30 + _random.nextDouble() * 40 : 0.0;
-      current = (current + drift).clamp(50, 100).toDouble();
-      final value = (current + activityBoost).clamp(45, 190).toDouble();
+
+      final drift = (_random.nextDouble() - 0.5) * 3;
+      restingBase = (restingBase + drift).clamp(62.0, 74.0).toDouble();
+
+      final activeBoost = isActive ? 25.0 + _random.nextDouble() * 35 : 0.0;
+      final nightDip = isNight ? -4.0 - _random.nextDouble() * 4.0 : 0.0;
+      final value = (restingBase + activeBoost + nightDip).clamp(48.0, 180.0);
 
       samples.add(
         HealthMeasurement(
@@ -84,25 +119,28 @@ class FakeHealthRepository implements HealthRepository {
           timestamp: timestamp,
           source: HealthDataSource.simulated,
           activityState: activityState,
-          qualityScore: 0.85 + _random.nextDouble() * 0.15,
-          confidence: 0.8 + _random.nextDouble() * 0.2,
+          qualityScore: 0.88 + _random.nextDouble() * 0.12,
+          confidence: 0.85 + _random.nextDouble() * 0.15,
         ),
       );
     }
-    return samples; // already newest-first
+    return samples; // newest-first
   }
 
   List<HealthMeasurement> _generateStepsHistory() {
     final now = DateTime.now();
-    const sampleCount = 24; // hourly buckets over the past 24 hours
+    // 7 days of hourly buckets = 168 samples
+    const sampleCount = 168;
     final samples = <HealthMeasurement>[];
 
     for (var i = 0; i < sampleCount; i++) {
       final timestamp = now.subtract(Duration(hours: i));
       final hourOfDay = timestamp.hour;
-      // Roughly model daytime activity vs. nighttime rest.
       final isAwakeHour = hourOfDay >= 7 && hourOfDay <= 22;
-      final baseSteps = isAwakeHour ? 200 + _random.nextInt(600) : _random.nextInt(30);
+
+      final baseSteps = isAwakeHour
+          ? 250 + _random.nextInt(650)
+          : _random.nextInt(25);
 
       samples.add(
         HealthMeasurement(
@@ -116,23 +154,24 @@ class FakeHealthRepository implements HealthRepository {
           activityState: baseSteps > 400
               ? ActivityState.walking
               : ActivityState.resting,
-          qualityScore: 0.9 + _random.nextDouble() * 0.1,
-          confidence: 0.85 + _random.nextDouble() * 0.15,
+          qualityScore: 0.92 + _random.nextDouble() * 0.08,
+          confidence: 0.90 + _random.nextDouble() * 0.10,
         ),
       );
     }
-    return samples; // already newest-first
+    return samples; // newest-first
   }
 
   List<HealthMeasurement> _generateSpO2History() {
     final now = DateTime.now();
-    const sampleCount = 8; // spot checks every few hours
+    // 14 days of spot checks (~2-3 checks per day = ~35 samples)
+    const sampleCount = 35;
     final samples = <HealthMeasurement>[];
 
     for (var i = 0; i < sampleCount; i++) {
-      final timestamp = now.subtract(Duration(hours: 3 * i));
-      // Plausible resting SpO2: 96% - 99%
-      final spo2Value = 96.0 + _random.nextInt(4);
+      // Space them out over 14 days (~9.6 hours apart)
+      final timestamp = now.subtract(Duration(minutes: (i * 580) + _random.nextInt(60)));
+      final spo2Value = 96.0 + _random.nextInt(4); // 96 to 99%
 
       samples.add(
         HealthMeasurement(
@@ -143,11 +182,11 @@ class FakeHealthRepository implements HealthRepository {
           unit: HealthMetricType.spo2.defaultUnit,
           timestamp: timestamp,
           source: HealthDataSource.simulated,
-          qualityScore: 0.92 + _random.nextDouble() * 0.08,
-          confidence: 0.9 + _random.nextDouble() * 0.1,
+          qualityScore: 0.94 + _random.nextDouble() * 0.06,
+          confidence: 0.92 + _random.nextDouble() * 0.08,
         ),
       );
     }
-    return samples; // already newest-first
+    return samples; // newest-first
   }
 }
